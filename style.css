@@ -806,8 +806,8 @@ button:active {
    ============================================================ */
 .fs-actions {
     position: absolute;
-    bottom: 40px; /* Distancia desde abajo */
-    right: 20px;  /* Distancia desde la derecha */
+    bottom: 40px;
+    right: 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -847,7 +847,6 @@ button:active {
     transition: fill 0.2s ease, stroke 0.2s ease, transform 0.2s ease;
 }
 
-/* Me gusta activo (rojo) */
 .fs-like.active {
     color: #ff2a2a;
 }
@@ -886,4 +885,250 @@ button:active {
     opacity: 1;
     visibility: visible;
     transform: translate(-50%, 0);
+}
+
+/* ============================================================
+   NUEVO: PERFIL DEL ARTISTA
+   ============================================================ */
+.artist-profile {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 81px;
+    background: #000000;
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(110%);
+    visibility: hidden;
+    transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+                visibility 0.42s;
+    overflow: hidden;
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.artist-profile.visible {
+    transform: translateY(0);
+    visibility: visible;
+}
+
+.ap-header {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 20px 12px;
+}
+
+.ap-header-title {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 2.4px;
+    color: #ffffff;
+    text-transform: uppercase;
+}
+
+.ap-close {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+.ap-close:active {
+    transform: translateY(-50%) scale(0.9);
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.ap-scroll {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 24px;
+}
+
+.ap-hero {
+    position: relative;
+    width: calc(100% - 32px);
+    margin: 4px 16px 0;
+    aspect-ratio: 16 / 10;
+    border-radius: 18px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #6b7c8a 0%, #93a58c 55%, #5e7a3a 100%);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+}
+
+.ap-hero-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+.ap-hero-img.loaded { opacity: 1; }
+
+.ap-hero-shade {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg,
+                rgba(0, 0, 0, 0.05) 45%,
+                rgba(0, 0, 0, 0.72) 100%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.ap-artist-name {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 16px;
+    margin: 0;
+    font-size: clamp(22px, 6vw, 30px);
+    font-weight: 800;
+    line-height: 1.15;
+    color: #ffffff;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.85);
+    word-break: break-word;
+    z-index: 2;
+}
+
+.ap-stats {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 16px 20px 10px;
+}
+
+.ap-total {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.ap-total-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.3px;
+}
+
+.ap-total-value {
+    font-size: 20px;
+    font-weight: 800;
+    color: #ff2a2a;
+    letter-spacing: 0.5px;
+    line-height: 1.1;
+}
+
+.ap-listen-btn {
+    background: #ff2a2a;
+    color: #ffffff;
+    border: none;
+    border-radius: 50px;
+    padding: 14px 24px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    box-shadow: 0 8px 22px rgba(255, 42, 42, 0.35);
+    transition: transform 0.15s ease, opacity 0.2s ease;
+    white-space: nowrap;
+}
+.ap-listen-btn:active { transform: scale(0.95); opacity: 0.9; }
+
+.ap-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 10px 16px 8px;
+}
+
+.ap-card {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    border: none;
+    padding: 0;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #1a1a1a;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.ap-card:active { transform: scale(0.95); }
+
+.ap-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+}
+
+.ap-card-title {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 22px 6px 7px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.18;
+    color: #ffffff;
+    text-align: center;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.85));
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ============================================================
+   NUEVO: indicador de canción reproduciéndose en el perfil
+   ============================================================ */
+.ap-card.playing {
+    box-shadow:
+        0 0 0 2px #ff2a2a,
+        0 6px 18px rgba(255, 42, 42, 0.45);
+    transform: scale(1.02);
+}
+
+.ap-card.playing::after {
+    content: "▶";
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #ffffff;
+    background: #ff2a2a;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+    z-index: 3;
 }
