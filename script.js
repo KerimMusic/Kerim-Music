@@ -874,6 +874,76 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    /* ============================================================
+       NUEVA FUNCIÓN: Título clickeable en pantalla completa
+       ------------------------------------------------------------
+       Al pulsar el título de la canción que se está reproduciendo,
+       se abre el perfil del artista correspondiente a esa canción.
+       No modifica nada más del reproductor.
+       ============================================================ */
+    (function initFsTitleArtistLink() {
+        const fsTitleEl = document.getElementById('fs-title');
+        if (!fsTitleEl || !playlist) return;
+
+        /* Hacerlo visualmente clicable sin alterar su diseño base */
+        fsTitleEl.style.cursor = 'pointer';
+        fsTitleEl.style.pointerEvents = 'auto';
+        fsTitleEl.style.touchAction = 'manipulation';
+        fsTitleEl.setAttribute('role', 'button');
+        fsTitleEl.setAttribute('tabindex', '0');
+
+        /* Mismo criterio de extracción de artista usado en el perfil */
+        const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
+        function getArtistFromActiveItem() {
+            const activeItem = playlist.querySelector('.playlist-item.active');
+            if (!activeItem) return '';
+            const sub = activeItem.querySelector('.item-subtitle')?.textContent || '';
+            const idx = sub.indexOf('·');
+            const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+            if (!namePart) return '';
+            const first = (namePart.split(COLLAB_SPLIT)[0] || namePart).trim();
+            return first || namePart;
+        }
+
+        function openArtistFromTitle() {
+            const artistName = getArtistFromActiveItem();
+            if (!artistName) return;
+
+            if (typeof window.__openArtistProfile !== 'function') return;
+
+            /* Cerrar pantalla completa para que el perfil sea visible
+               (el perfil tiene z-index menor que el fs-player) */
+            if (typeof closeFullscreen === 'function') {
+                closeFullscreen();
+            }
+
+            /* Pequeño delay para que termine la animación de cierre
+               y se abra el perfil de forma fluida */
+            setTimeout(() => {
+                window.__openArtistProfile(artistName);
+            }, 80);
+        }
+
+        fsTitleEl.addEventListener('click', openArtistFromTitle);
+        fsTitleEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openArtistFromTitle();
+            }
+        });
+
+        /* Feedback visual sutil al pulsar (no altera el diseño en reposo) */
+        fsTitleEl.addEventListener('pointerdown', () => {
+            fsTitleEl.style.opacity = '0.7';
+        });
+        ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
+            fsTitleEl.addEventListener(evt, () => {
+                fsTitleEl.style.opacity = '';
+            });
+        });
+    })();
+
     (async () => {
         await cargarDocsDeFirebase();
         pintarTodasLasReproducciones();
@@ -1083,7 +1153,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   5. PERFIL DEL ARTISTA (NUEVO)
+   5. PERFIL DEL ARTISTA
    ------------------------------------------------------------
    El perfil permanece abierto hasta que el usuario lo cierre
    explícitamente (botón X o tecla Escape). Al pulsar
