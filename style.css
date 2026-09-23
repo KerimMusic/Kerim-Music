@@ -855,3 +855,35 @@ button:active {
     fill: #ff2a2a;
     stroke: #ff2a2a;
 }
+
+/* ============================================================
+   NOTIFICACIÓN TOAST - BLOQUEO DE ME GUSTA (30 días)
+   ============================================================ */
+#omega-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 100px;
+    transform: translate(-50%, 20px);
+    background: rgba(255, 42, 42, 0.96);
+    color: #ffffff;
+    padding: 14px 20px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    max-width: 88%;
+    width: max-content;
+    text-align: center;
+    box-shadow: 0 12px 32px rgba(255, 42, 42, 0.45);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+    z-index: 3000;
+    pointer-events: none;
+    word-wrap: break-word;
+}
+#omega-toast.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+}
