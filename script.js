@@ -89,22 +89,23 @@ function pintarTodasLasReproducciones() {
     });
 }
 
-/* Incrementar reproducciones de un item */
-async function incrementarReproduccion(item) {
-    if (!item) return;
+/* Cambiar reproducciones en Firebase (delta = +1 o -1) */
+async function cambiarReproducciones(item, delta) {
+    if (!item || !delta) return;
     const title = item.querySelector('.item-title')?.textContent.trim() || '';
     const doc = findFirebaseDoc(title);
     if (!doc) return;
 
     try {
         await doc.ref.update({
-            reproducciones: firebase.firestore.FieldValue.increment(1)
+            reproducciones: firebase.firestore.FieldValue.increment(delta)
         });
-        doc.data.reproducciones = (doc.data.reproducciones || 0) + 1;
-        pintarReproducciones(item, doc.data.reproducciones);
-        console.log(`▶ +1 a "${doc.id}" (total: ${doc.data.reproducciones})`);
+        const nuevo = Math.max(0, (doc.data.reproducciones || 0) + delta);
+        doc.data.reproducciones = nuevo;
+        pintarReproducciones(item, nuevo);
+        console.log(`${delta > 0 ? '👍 +1' : '👎 -1'} a "${doc.id}" (total: ${nuevo})`);
     } catch (e) {
-        console.warn('No se pudo incrementar reproducciones:', e);
+        console.warn('No se pudo actualizar reproducciones:', e);
     }
 }
 
@@ -265,11 +266,10 @@ document.addEventListener('DOMContentLoaded', () => {
         currentTimeEl.textContent = '0:00';
         durationEl.textContent = '0:00';
 
+        // 🔥 NOTA: ya NO se cuenta reproducción al reproducir.
+        // El contador solo cambia con el botón "Me gusta".
         if (autoplay) {
-            audioPlayer.play().then(() => {
-                // 🔥 INCREMENTAR REPRODUCCIÓN EN FIREBASE
-                incrementarReproduccion(item);
-            }).catch(err => {
+            audioPlayer.play().catch(err => {
                 console.warn('No se pudo iniciar automáticamente:', err);
             });
         }
@@ -494,6 +494,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="fs-spindle"></span>
                 </div>
                 <h2 class="fs-title" id="fs-title">Título del Beat</h2>
+                <div class="fs-actions">
+                    <button class="fs-like" id="fs-like" type="button" aria-label="Me gusta">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                        </svg>
+                        <span>Me Gusta</span>
+                    </button>
+                </div>
             </div>
         </div>
     `;
@@ -506,6 +514,60 @@ document.addEventListener('DOMContentLoaded', () => {
     const fsCover     = document.getElementById('fs-cover');
     const fsTitle     = document.getElementById('fs-title');
     const fsClose     = document.getElementById('fs-close');
+
+    /* ============================================================
+       🔥 ME GUSTA (por usuario, persistente)
+       ============================================================ */
+    const fsLikeBtn    = document.getElementById('fs-like');
+
+    const LIKES_KEY    = 'omega_likes_v1';
+
+    function _readMap(key) {
+        try { return JSON.parse(localStorage.getItem(key) || '{}'); }
+        catch (_) { return {}; }
+    }
+    function _writeMap(key, map) {
+        try { localStorage.setItem(key, JSON.stringify(map)); } catch (_) {}
+    }
+
+    function getItemKey(item) {
+        if (!item) return '';
+        return normalizeStr(item.querySelector('.item-title')?.textContent.trim() || '');
+    }
+
+    function updateLikeUI() {
+        if (!fsLikeBtn) return;
+        const key = getItemKey(currentItem);
+        if (!key) {
+            fsLikeBtn.classList.remove('active');
+            return;
+        }
+        const likes = _readMap(LIKES_KEY);
+        fsLikeBtn.classList.toggle('active', !!likes[key]);
+    }
+
+    fsLikeBtn.addEventListener('click', async () => {
+        if (!currentItem) return;
+        const key = getItemKey(currentItem);
+        if (!key) return;
+
+        const likes = _readMap(LIKES_KEY);
+        const wasLiked = !!likes[key];
+
+        if (wasLiked) {
+            // Quitar Me gusta → -1 reproducción
+            delete likes[key];
+            _writeMap(LIKES_KEY, likes);
+            updateLikeUI();
+            await cambiarReproducciones(currentItem, -1);
+        } else {
+            // Dar Me Gusta → +1 reproducción
+            likes[key] = true;
+            _writeMap(LIKES_KEY, likes);
+            updateLikeUI();
+            await cambiarReproducciones(currentItem, 1);
+        }
+    });
 
     let lastCoverSrc = '';
 
@@ -524,6 +586,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         fsTitle.textContent = newTitle;
+
+        updateLikeUI(); // 👈 Actualiza estado Me gusta
     }
 
     const syncObserver = new MutationObserver(() => syncFromMini());
