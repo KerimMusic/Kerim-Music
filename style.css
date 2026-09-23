@@ -888,7 +888,7 @@ button:active {
 }
 
 /* ============================================================
-   NUEVO: PERFIL DEL ARTISTA
+   PERFIL DEL ARTISTA
    ============================================================ */
 .artist-profile {
     position: absolute;
@@ -1105,9 +1105,7 @@ button:active {
     overflow: hidden;
 }
 
-/* ============================================================
-   NUEVO: indicador de canción reproduciéndose en el perfil
-   ============================================================ */
+/* indicador de canción reproduciéndose en el perfil */
 .ap-card.playing {
     box-shadow:
         0 0 0 2px #ff2a2a,
@@ -1133,9 +1131,7 @@ button:active {
     z-index: 3;
 }
 
-/* ============================================================
-   NUEVO: Feedback visual del título clicable en pantalla completa
-   ============================================================ */
+/* Feedback visual del título clicable en pantalla completa */
 #fs-title {
     cursor: pointer;
     pointer-events: auto;
@@ -1147,12 +1143,7 @@ button:active {
 }
 
 /* ============================================================
-   NUEVO: BOTONES "REPETIR" Y "ALEATORIO" (PANTALLA COMPLETA)
-   ------------------------------------------------------------
-   Se insertan dentro de .fs-actions, ENCIMA del botón "Me Gusta",
-   respetando la distribución de la imagen de referencia:
-   Repetir (arriba) · Aleatorio (medio) · Me Gusta (abajo).
-   Mismo tamaño, espaciado y estilo que el botón "Me Gusta".
+   BOTONES "REPETIR" Y "ALEATORIO" (PANTALLA COMPLETA)
    ============================================================ */
 .fs-mode-btn {
     background: none;
@@ -1190,7 +1181,6 @@ button:active {
     transition: stroke 0.2s ease, transform 0.2s ease;
 }
 
-/* Estado ACTIVADO (igual que "Me Gusta") */
 .fs-mode-btn.active {
     color: #ff2a2a;
 }
@@ -1203,7 +1193,6 @@ button:active {
     white-space: nowrap;
 }
 
-/* Marca "1" del modo "Repetir 1 canción" */
 .fs-mode-btn svg .fs-repeat-one-mark {
     fill: currentColor;
     stroke: none;
@@ -1214,4 +1203,124 @@ button:active {
 
 .fs-mode-btn.mode-one svg .fs-repeat-one-mark {
     display: block;
+}
+
+/* ============================================================
+   NUEVO: ORGANIZACIÓN POR ÁLBUMES EN EL PERFIL DEL ARTISTA
+   ------------------------------------------------------------
+   Estas reglas SOLO afectan a los nuevos contenedores
+   (.ap-album, .ap-album-header, .ap-album-tracks, .ap-temas-*).
+   No modifican ni sobrescriben el estilo actual de .ap-grid,
+   .ap-card ni del resto del perfil.
+   ============================================================ */
+
+/* Contenedor de cada álbum (ocupa todo el ancho del grid) */
+.ap-album {
+    grid-column: 1 / -1;
+    background: rgba(255, 255, 255, 0.035);
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+/* Cabecera clicable del álbum */
+.ap-album-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #ffffff;
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: background-color 0.2s ease;
+}
+.ap-album-header:active {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.ap-album-header > img {
+    width: 58px;
+    height: 58px;
+    border-radius: 10px;
+    object-fit: cover;
+    object-position: center;
+    flex-shrink: 0;
+    display: block;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.ap-album-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    gap: 2px;
+}
+
+.ap-album-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.6px;
+    color: #ff2a2a;
+    text-transform: uppercase;
+}
+
+.ap-album-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1.2;
+    word-break: break-word;
+}
+
+.ap-album-count {
+    font-size: 11px;
+    color: #999999;
+    letter-spacing: 0.3px;
+}
+
+.ap-album-arrow {
+    color: #999999;
+    font-size: 13px;
+    padding: 0 6px;
+    flex-shrink: 0;
+    transition: transform 0.25s ease, color 0.2s ease;
+}
+.ap-album.expanded .ap-album-arrow {
+    transform: rotate(90deg);
+    color: #ff2a2a;
+}
+
+/* Contenedor interno de las canciones del álbum (reutiliza .ap-card) */
+.ap-album-tracks {
+    display: none;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 0 10px 10px;
+}
+.ap-album.expanded .ap-album-tracks {
+    display: grid;
+}
+
+/* Encabezado de la sección "TEMAS" (canciones sin álbum) */
+.ap-temas-header {
+    grid-column: 1 / -1;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 2.2px;
+    color: #ff2a2a;
+    text-transform: uppercase;
+    padding: 10px 4px 2px;
+}
+
+/* Grid de temas independientes (reutiliza .ap-card) */
+.ap-temas-grid {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
 }
