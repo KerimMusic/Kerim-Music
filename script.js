@@ -111,14 +111,9 @@ async function cambiarReproducciones(item, delta) {
 
 /* ============================================================
    🔥 MODO ARTISTA (GLOBAL)
-   ------------------------------------------------------------
-   Cuando está activo, TODA reproducción (auto-next, aleatoria,
-   al terminar, etc.) se restringe a las canciones del artista.
-   Se desactiva SOLO si el usuario pulsa manualmente una canción
-   que NO pertenece al artista filtrado.
    ============================================================ */
-window.__artistFilter      = null;  // Array de .playlist-item del artista
-window.__artistFilterName  = '';    // Nombre del artista (para logs)
+window.__artistFilter      = null;
+window.__artistFilterName  = '';
 
 function clearArtistFilter() {
     window.__artistFilter     = null;
@@ -256,7 +251,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return item.dataset.cover || '';
     }
 
-    /* 🔥 Ahora respeta el modo artista */
     function getCandidateItems() {
         const all = getAllItems();
         if (window.__artistFilter && window.__artistFilter.length) {
@@ -330,7 +324,6 @@ document.addEventListener('DOMContentLoaded', () => {
         handleLoadError(currentItem);
     });
 
-    /* 🔥 playRandomItem ahora respeta el modo artista */
     function playRandomItem() {
         const items = getCandidateItems();
         if (items.length === 0) return;
@@ -345,7 +338,6 @@ document.addEventListener('DOMContentLoaded', () => {
         loadItem(randomItem, true);
     }
 
-    /* 🔥 goNext / goPrev también respetan el modo artista */
     function goNextItem() {
         const items = getCandidateItems();
         if (!items.length) return;
@@ -415,7 +407,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        /* 🔥 La siguiente canción respeta el modo artista */
         playRandomItem();
     });
 
@@ -426,8 +417,6 @@ document.addEventListener('DOMContentLoaded', () => {
         audioPlayer.currentTime = Math.min(1, Math.max(0, ratio)) * audioPlayer.duration;
     });
 
-    /* 🔥 Si el usuario pulsa manualmente una canción FUERA del artista,
-       se desactiva el modo artista. */
     playlist.addEventListener('click', (e) => {
         const item = e.target.closest('.playlist-item');
         if (!item) return;
@@ -818,7 +807,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (dt > 1200) return;
         if (absY > 50 && absY > absX * 1.3) {
-            /* 🔥 Ahora usan el modo artista */
             if (dy < 0) goNextItem();
             else        goPrevItem();
         }
@@ -855,7 +843,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateVinylState();
     }
 
-    /* Estas funciones ahora se conectan al modo artista */
     function goNext() {
         animateSlide('up');
         goNextItem();
@@ -876,23 +863,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /* ============================================================
        NUEVA FUNCIÓN: Título clickeable en pantalla completa
-       ------------------------------------------------------------
-       Al pulsar el título de la canción que se está reproduciendo,
-       se abre el perfil del artista correspondiente a esa canción.
-       No modifica nada más del reproductor.
        ============================================================ */
     (function initFsTitleArtistLink() {
         const fsTitleEl = document.getElementById('fs-title');
         if (!fsTitleEl || !playlist) return;
 
-        /* Hacerlo visualmente clicable sin alterar su diseño base */
         fsTitleEl.style.cursor = 'pointer';
         fsTitleEl.style.pointerEvents = 'auto';
         fsTitleEl.style.touchAction = 'manipulation';
         fsTitleEl.setAttribute('role', 'button');
         fsTitleEl.setAttribute('tabindex', '0');
 
-        /* Mismo criterio de extracción de artista usado en el perfil */
         const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
 
         function getArtistFromActiveItem() {
@@ -912,14 +893,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (typeof window.__openArtistProfile !== 'function') return;
 
-            /* Cerrar pantalla completa para que el perfil sea visible
-               (el perfil tiene z-index menor que el fs-player) */
             if (typeof closeFullscreen === 'function') {
                 closeFullscreen();
             }
 
-            /* Pequeño delay para que termine la animación de cierre
-               y se abra el perfil de forma fluida */
             setTimeout(() => {
                 window.__openArtistProfile(artistName);
             }, 80);
@@ -933,7 +910,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        /* Feedback visual sutil al pulsar (no altera el diseño en reposo) */
         fsTitleEl.addEventListener('pointerdown', () => {
             fsTitleEl.style.opacity = '0.7';
         });
@@ -1154,11 +1130,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    5. PERFIL DEL ARTISTA
-   ------------------------------------------------------------
-   El perfil permanece abierto hasta que el usuario lo cierre
-   explícitamente (botón X o tecla Escape). Al pulsar
-   "Escuchar mi música" o cualquier canción del grid, se activa
-   el MODO ARTISTA: solo sonarán canciones de ese artista.
    ============================================================ */
 (function () {
     'use strict';
@@ -1182,7 +1153,6 @@ document.addEventListener('DOMContentLoaded', () => {
         let gridObserver    = null;
         const COLLAB_SPLIT  = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
 
-        /* --- Utilidades de artista --- */
         function getArtistsFromItem(item) {
             const sub = item.querySelector('.item-subtitle')?.textContent || '';
             const idx = sub.indexOf('·');
@@ -1228,7 +1198,6 @@ document.addEventListener('DOMContentLoaded', () => {
             catch (_) { return String(n || 0); }
         }
 
-        /* --- Marcar en el grid qué canción está sonando --- */
         function updatePlayingCard() {
             const active = playlist.querySelector('.playlist-item.active');
             const activeTitle = active
@@ -1244,7 +1213,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        /* --- Activa el MODO ARTISTA (solo sus canciones) --- */
         function activateArtistMode(artistName) {
             const list = getArtistItems(artistName);
             if (!list.length) return null;
@@ -1258,7 +1226,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return list;
         }
 
-        /* --- Render del perfil --- */
         function renderProfile(artistName) {
             currentArtist = artistName;
             const items = getArtistItems(artistName);
@@ -1266,7 +1233,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             apArtist.textContent = artistName;
 
-            /* Portada aleatoria tomada de las canciones del artista */
             const covers = items
                 .map(i => i.querySelector('.thumbnail img')?.src)
                 .filter(Boolean);
@@ -1285,10 +1251,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 apHeroImg.classList.remove('loaded');
             }
 
-            /* Total de reproducciones */
             apTotal.textContent = formatNumber(computeTotalPlays(items));
 
-            /* Cuadrícula de canciones */
             apGrid.innerHTML = '';
             items.forEach(item => {
                 const cover = item.querySelector('.thumbnail img')?.src || '';
@@ -1312,7 +1276,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 t.textContent = title;
                 card.appendChild(t);
 
-                /* 🔥 Al pulsar una canción: reproduce + ACTIVA modo artista */
                 card.addEventListener('click', () => {
                     activateArtistMode(artistName);
                     item.click();
@@ -1322,9 +1285,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 apGrid.appendChild(card);
             });
 
-            /* 🔥 "Escuchar mi música": activa el MODO ARTISTA y suena
-               una canción aleatoria del artista. Al terminar, la siguiente
-               también será del mismo artista. */
             apListen.onclick = () => {
                 const list = activateArtistMode(artistName);
                 if (!list || !list.length) return;
@@ -1333,7 +1293,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(updatePlayingCard, 60);
             };
 
-            /* Refresco automático del total mientras el perfil está abierto */
             if (refreshTimer) clearInterval(refreshTimer);
             refreshTimer = setInterval(() => {
                 if (!profileEl.classList.contains('visible') || !currentArtist) return;
@@ -1341,7 +1300,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 apTotal.textContent = formatNumber(computeTotalPlays(cur));
             }, 1500);
 
-            /* Observar cambios de .active en la playlist para mantener el grid sincronizado */
             if (gridObserver) gridObserver.disconnect();
             gridObserver = new MutationObserver(() => updatePlayingCard());
             gridObserver.observe(playlist, {
@@ -1355,7 +1313,6 @@ document.addEventListener('DOMContentLoaded', () => {
             updatePlayingCard();
         }
 
-        /* --- Abrir / Cerrar (SOLO con X o Escape) --- */
         function openProfile(artistName) {
             renderProfile(artistName);
             profileEl.classList.add('visible');
@@ -1368,8 +1325,6 @@ document.addEventListener('DOMContentLoaded', () => {
             currentArtist = null;
             if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
             if (gridObserver) { gridObserver.disconnect(); gridObserver = null; }
-            /* NO se desactiva el modo artista aquí: la música sigue sonando
-               solo del artista hasta que el usuario elija otra canción. */
         }
 
         if (apClose) apClose.addEventListener('click', closeProfile);
@@ -1380,7 +1335,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        /* --- Disparador: búsqueda exacta de un artista --- */
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
                 const q = normalizeStr(e.target.value);
@@ -1399,5 +1353,296 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('DOMContentLoaded', initArtistProfile);
     } else {
         initArtistProfile();
+    }
+})();
+
+/* ============================================================
+   6. NUEVO: REPETIR + ALEATORIO (PANTALLA COMPLETA)
+   ------------------------------------------------------------
+   Módulo 100% independiente. NO modifica ninguna función
+   existente: agrega dos botones dentro de .fs-actions (encima
+   del botón "Me Gusta") y controla el modo de reproducción.
+
+   · Repetir   → Desactivado / Repetir todo / Repetir 1 canción
+   · Aleatorio → Activado / Desactivado
+   ============================================================ */
+(function () {
+    'use strict';
+
+    /* ---------- Claves de persistencia ---------- */
+    const REPEAT_KEY  = 'omega_repeat_mode_v1';
+    const SHUFFLE_KEY = 'omega_shuffle_v1';
+    const LIKES_KEY   = 'omega_likes_v1';
+
+    /* ---------- Estado ---------- */
+    let repeatMode = 'off';   /* 'off' | 'all' | 'one' */
+    let shuffleOn  = true;    /* por defecto se conserva el comportamiento aleatorio actual */
+
+    try {
+        const r = localStorage.getItem(REPEAT_KEY);
+        if (r === 'off' || r === 'all' || r === 'one') repeatMode = r;
+
+        const s = localStorage.getItem(SHUFFLE_KEY);
+        if (s === '0')      shuffleOn = false;
+        else if (s === '1') shuffleOn = true;
+    } catch (_) {}
+
+    function persist() {
+        try {
+            localStorage.setItem(REPEAT_KEY, repeatMode);
+            localStorage.setItem(SHUFFLE_KEY, shuffleOn ? '1' : '0');
+        } catch (_) {}
+    }
+
+    /* ---------- Iconos (mismo trazo que el resto del reproductor) ---------- */
+    const ICON_REPEAT = `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+            <polyline points="17 1 21 5 17 9"/>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <polyline points="7 23 3 19 7 15"/>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+            <text class="fs-repeat-one-mark" x="12" y="15.3" text-anchor="middle">1</text>
+        </svg>`;
+
+    const ICON_SHUFFLE = `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+            <polyline points="16 3 21 3 21 8"/>
+            <line x1="4" y1="20" x2="21" y2="3"/>
+            <polyline points="21 16 21 21 16 21"/>
+            <line x1="15" y1="15" x2="21" y2="21"/>
+            <line x1="4" y1="4" x2="9" y2="9"/>
+        </svg>`;
+
+    /* ---------- Referencias ---------- */
+    let repeatBtn  = null;
+    let shuffleBtn = null;
+
+    /* ---------- Utilidades ---------- */
+    function haptic() {
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+    }
+
+    function toast(msg) {
+        let el = document.getElementById('omega-toast');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'omega-toast';
+            el.setAttribute('role', 'status');
+            el.setAttribute('aria-live', 'polite');
+            document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        el.classList.remove('visible');
+        void el.offsetWidth;
+        el.classList.add('visible');
+
+        clearTimeout(el._omegaModeTimer);
+        el._omegaModeTimer = setTimeout(() => el.classList.remove('visible'), 1600);
+    }
+
+    /* ---------- UI ---------- */
+    function updateRepeatUI() {
+        if (!repeatBtn) return;
+        repeatBtn.classList.toggle('active', repeatMode !== 'off');
+        repeatBtn.classList.toggle('mode-one', repeatMode === 'one');
+
+        const aria = repeatMode === 'one' ? 'Repetir 1 canción'
+                   : repeatMode === 'all' ? 'Repetir todo'
+                   : 'Repetir desactivado';
+        repeatBtn.setAttribute('aria-label', aria);
+        repeatBtn.setAttribute('title', aria);
+    }
+
+    function updateShuffleUI() {
+        if (!shuffleBtn) return;
+        shuffleBtn.classList.toggle('active', shuffleOn);
+        const aria = shuffleOn ? 'Aleatorio activado' : 'Aleatorio desactivado';
+        shuffleBtn.setAttribute('aria-label', aria);
+        shuffleBtn.setAttribute('title', aria);
+    }
+
+    /* ---------- Aplicar el modo repetir al <audio> ---------- */
+    function applyRepeatToAudio() {
+        const audio = document.getElementById('audio-player');
+        if (!audio) return;
+        try { audio.loop = (repeatMode === 'one'); } catch (_) {}
+    }
+
+    /* ---------- Lista secuencial (respeta el modo artista) ---------- */
+    function getSequentialList() {
+        const playlist = document.getElementById('playlist');
+        if (!playlist) return [];
+
+        const all = Array.from(playlist.querySelectorAll('.playlist-item'));
+
+        if (window.__artistFilter && window.__artistFilter.length) {
+            const filtered = all.filter(i => window.__artistFilter.includes(i));
+            if (filtered.length) return filtered;
+        }
+        return all;
+    }
+
+    /* ---------- Registro de reproducción completada ---------- */
+    function registrarReproduccionCompletada(item) {
+        if (!item || typeof normalizeStr !== 'function') return;
+
+        const title = item.querySelector('.item-title')?.textContent.trim() || '';
+        if (!title) return;
+
+        const key = normalizeStr(title);
+        if (!key) return;
+
+        let map = {};
+        try { map = JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); } catch (_) { map = {}; }
+
+        let data = map[key];
+        if (data === true) data = { liked: true, ts: 0, locked: false };
+
+        const alreadyLiked = !!(data && typeof data === 'object' && data.liked !== false);
+        if (alreadyLiked) return;
+
+        map[key] = { liked: true, ts: Date.now(), locked: true };
+        try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
+
+        if (typeof cambiarReproducciones === 'function') {
+            cambiarReproducciones(item, 1);
+        }
+    }
+
+    /* ---------- Fin de lista ---------- */
+    function detenerAlFinal(audio) {
+        try { audio.pause(); } catch (_) {}
+        try { audio.currentTime = 0; } catch (_) {}
+
+        const progressBarEl = document.getElementById('progress-bar');
+        const currentTimeEl = document.getElementById('current-time');
+
+        if (progressBarEl) {
+            progressBarEl.style.setProperty('--progress', '0%');
+            progressBarEl.setAttribute('aria-valuenow', 0);
+        }
+        if (currentTimeEl) currentTimeEl.textContent = '0:00';
+
+        try { audio.dispatchEvent(new Event('pause')); } catch (_) {}
+    }
+
+    /* ---------- Interceptor del evento "ended" (fase captura) ---------- */
+    function onEndedCapture(e) {
+        const audio = document.getElementById('audio-player');
+        if (!audio || e.target !== audio) return;
+
+        /* Repetir 1 canción */
+        if (repeatMode === 'one') {
+            e.stopPropagation();
+            try { audio.currentTime = 0; } catch (_) {}
+            const p = audio.play();
+            if (p && p.catch) p.catch(() => {});
+            return;
+        }
+
+        /* Aleatorio activado → comportamiento aleatorio original */
+        if (shuffleOn) return;
+
+        /* Secuencial */
+        e.stopPropagation();
+
+        const playlist = document.getElementById('playlist');
+        if (!playlist) return;
+
+        const list   = getSequentialList();
+        if (!list.length) return;
+
+        const active = playlist.querySelector('.playlist-item.active');
+        const idx    = list.indexOf(active);
+
+        registrarReproduccionCompletada(active);
+
+        let nextItem = null;
+
+        if (idx === -1) {
+            nextItem = list[0];
+        } else if (idx + 1 < list.length) {
+            nextItem = list[idx + 1];
+        } else if (repeatMode === 'all') {
+            nextItem = list[0];
+        }
+
+        if (nextItem) {
+            nextItem.click();
+        } else {
+            detenerAlFinal(audio);
+        }
+    }
+
+    /* ---------- Construcción de los botones ---------- */
+    let started = false;
+
+    function init() {
+        const fsActions = document.querySelector('.fs-actions');
+        if (!fsActions) return false;
+
+        if (!document.getElementById('fs-repeat')) {
+            repeatBtn = document.createElement('button');
+            repeatBtn.type = 'button';
+            repeatBtn.id = 'fs-repeat';
+            repeatBtn.className = 'fs-mode-btn';
+            repeatBtn.innerHTML = ICON_REPEAT + '<span class="fs-mode-label">Repetir</span>';
+
+            shuffleBtn = document.createElement('button');
+            shuffleBtn.type = 'button';
+            shuffleBtn.id = 'fs-shuffle';
+            shuffleBtn.className = 'fs-mode-btn';
+            shuffleBtn.innerHTML = ICON_SHUFFLE + '<span class="fs-mode-label">Aleatorio</span>';
+
+            fsActions.insertBefore(shuffleBtn, fsActions.firstChild);
+            fsActions.insertBefore(repeatBtn, fsActions.firstChild);
+        } else {
+            repeatBtn  = document.getElementById('fs-repeat');
+            shuffleBtn = document.getElementById('fs-shuffle');
+        }
+
+        repeatBtn.addEventListener('click', () => {
+            haptic();
+            repeatMode = repeatMode === 'off' ? 'all'
+                       : repeatMode === 'all' ? 'one'
+                       : 'off';
+            persist();
+            applyRepeatToAudio();
+            updateRepeatUI();
+
+            toast(repeatMode === 'off' ? 'Repetir: desactivado'
+                : repeatMode === 'all' ? 'Repetir: toda la lista'
+                : 'Repetir: 1 canción');
+        });
+
+        shuffleBtn.addEventListener('click', () => {
+            haptic();
+            shuffleOn = !shuffleOn;
+            persist();
+            updateShuffleUI();
+
+            toast(shuffleOn ? 'Aleatorio: activado' : 'Aleatorio: desactivado');
+        });
+
+        updateRepeatUI();
+        updateShuffleUI();
+        applyRepeatToAudio();
+
+        document.addEventListener('ended', onEndedCapture, true);
+        return true;
+    }
+
+    function bootWithRetry(attempt) {
+        if (started) return;
+        if (init()) { started = true; return; }
+        if ((attempt || 0) < 20) {
+            setTimeout(() => bootWithRetry((attempt || 0) + 1), 150);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => bootWithRetry(0));
+    } else {
+        bootWithRetry(0);
     }
 })();
