@@ -266,8 +266,8 @@ document.addEventListener('DOMContentLoaded', () => {
         currentTimeEl.textContent = '0:00';
         durationEl.textContent = '0:00';
 
-        // 🔥 NOTA: ya NO se cuenta reproducción al reproducir.
-        // El contador solo cambia con el botón "Me gusta".
+        // 🔥 NOTA: la reproducción solo se registra cuando la canción
+        // llega al 100% (ver el listener 'ended' más abajo).
         if (autoplay) {
             audioPlayer.play().catch(err => {
                 console.warn('No se pudo iniciar automáticamente:', err);
@@ -336,10 +336,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    audioPlayer.addEventListener('ended', () => {
+    /* ============================================================
+       🔥 ESCUCHA COMPLETA → +1 reproducción + Me gusta automático
+       ============================================================ */
+    audioPlayer.addEventListener('ended', async () => {
+        const duration  = audioPlayer.duration;
+        const played    = audioPlayer.currentTime;
+        const completed = !!duration && isFinite(duration) && played >= (duration - 1.5);
+
         updateIcon(false);
         updateProgress(0);
         currentTimeEl.textContent = '0:00';
+
+        if (completed && currentItem) {
+            const key = getItemKey(currentItem);
+            if (key) {
+                const data = getLikeData(key);
+                const alreadyLiked = !!(data && data.liked !== false);
+
+                // Solo registra +1 si aún no estaba likeada
+                // (evita inflar el contador reescuchando la misma canción)
+                if (!alreadyLiked) {
+                    setLikeData(key, { liked: true, ts: Date.now(), locked: true });
+                    updateLikeUI();
+                    await cambiarReproducciones(currentItem, 1);
+                }
+            }
+        }
+
         playRandomItem();
     });
 
@@ -516,11 +540,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const fsClose     = document.getElementById('fs-close');
 
     /* ============================================================
-       🔥 ME GUSTA (por usuario, persistente)
+       🔥 ME GUSTA (por usuario, persistente + bloqueo 30 días)
        ============================================================ */
     const fsLikeBtn    = document.getElementById('fs-like');
 
     const LIKES_KEY    = 'omega_likes_v1';
+    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000; // 30 días en milisegundos
 
     function _readMap(key) {
         try { return JSON.parse(localStorage.getItem(key) || '{}'); }
@@ -535,6 +560,62 @@ document.addEventListener('DOMContentLoaded', () => {
         return normalizeStr(item.querySelector('.item-title')?.textContent.trim() || '');
     }
 
+    /* Devuelve { liked, ts, locked } o null. Compatible con formato antiguo (true) */
+    function getLikeData(key) {
+        if (!key) return null;
+        const likes = _readMap(LIKES_KEY);
+        const val = likes[key];
+        if (val === undefined || val === null || val === false) return null;
+        if (val === true) {
+            // Formato antiguo (sin bloqueo): se respeta como like válido
+            return { liked: true, ts: 0, locked: false };
+        }
+        if (typeof val === 'object') return val;
+        return null;
+    }
+
+    /* ¿El Me gusta está bloqueado (dentro de los 30 días)? */
+    function isLikeLocked(key) {
+        const data = getLikeData(key);
+        if (!data || !data.locked) return false;
+        const elapsed = Date.now() - (data.ts || 0);
+        return elapsed < LIKE_LOCK_MS;
+    }
+
+    function setLikeData(key, data) {
+        if (!key) return;
+        const likes = _readMap(LIKES_KEY);
+        likes[key] = data;
+        _writeMap(LIKES_KEY, likes);
+    }
+
+    function removeLikeData(key) {
+        if (!key) return;
+        const likes = _readMap(LIKES_KEY);
+        delete likes[key];
+        _writeMap(LIKES_KEY, likes);
+    }
+
+    /* Notificación visual (toast) */
+    function showNotification(message) {
+        let toast = document.getElementById('omega-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'omega-toast';
+            toast.setAttribute('role', 'status');
+            toast.setAttribute('aria-live', 'polite');
+            document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.classList.remove('visible');
+        void toast.offsetWidth; // reinicia la animación
+        toast.classList.add('visible');
+        clearTimeout(toast._hideTimer);
+        toast._hideTimer = setTimeout(() => {
+            toast.classList.remove('visible');
+        }, 4500);
+    }
+
     function updateLikeUI() {
         if (!fsLikeBtn) return;
         const key = getItemKey(currentItem);
@@ -542,28 +623,36 @@ document.addEventListener('DOMContentLoaded', () => {
             fsLikeBtn.classList.remove('active');
             return;
         }
-        const likes = _readMap(LIKES_KEY);
-        fsLikeBtn.classList.toggle('active', !!likes[key]);
+        const data = getLikeData(key);
+        const isLiked = !!(data && data.liked !== false);
+        fsLikeBtn.classList.toggle('active', isLiked);
     }
 
+    /* Click en Me gusta: bloqueo de 30 días tras dar like */
     fsLikeBtn.addEventListener('click', async () => {
         if (!currentItem) return;
         const key = getItemKey(currentItem);
         if (!key) return;
 
-        const likes = _readMap(LIKES_KEY);
-        const wasLiked = !!likes[key];
+        // 🔒 Bloqueado: solo mostrar notificación, sin tocar contador
+        if (isLikeLocked(key)) {
+            showNotification(
+                'No puedes manipular el botón de Me gusta durante 30 días. ' +
+                'Ya te convertiste en un oyente de esta canción. ¡Disfrútala!'
+            );
+            return;
+        }
 
-        if (wasLiked) {
-            // Quitar Me gusta → -1 reproducción
-            delete likes[key];
-            _writeMap(LIKES_KEY, likes);
+        const data = getLikeData(key);
+
+        if (data && data.liked !== false) {
+            // Quitar Me gusta (ya pasaron los 30 días) → -1 reproducción
+            removeLikeData(key);
             updateLikeUI();
             await cambiarReproducciones(currentItem, -1);
         } else {
-            // Dar Me Gusta → +1 reproducción
-            likes[key] = true;
-            _writeMap(LIKES_KEY, likes);
+            // Dar Me gusta manual → +1 reproducción + bloqueo 30 días
+            setLikeData(key, { liked: true, ts: Date.now(), locked: true });
             updateLikeUI();
             await cambiarReproducciones(currentItem, 1);
         }
@@ -587,7 +676,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         fsTitle.textContent = newTitle;
 
-        updateLikeUI(); // 👈 Actualiza estado Me gusta
+        updateLikeUI(); // 👈 Actualiza estado Me gusta (con bloqueo)
     }
 
     const syncObserver = new MutationObserver(() => syncFromMini());
