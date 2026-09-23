@@ -57,7 +57,7 @@
         </nav>
 
         <div class="search-container" id="search-container">
-            <input type="text" class="search-input" id="search-input" placeholder="Buscar beat por título...">
+            <input type="text" class="search-input" id="search-input" placeholder="Buscar beat o artista...">
         </div>
 
         <div class="playlist" id="playlist">
@@ -610,6 +610,40 @@
                     <polygon points="5,3 19,12 5,21" fill="#ffffff" />
                 </svg>
             </button>
+        </div>
+
+        <!-- ============================================================
+             NUEVO: PERFIL DEL ARTISTA
+             ============================================================ -->
+        <div class="artist-profile" id="artist-profile" aria-hidden="true">
+            <div class="ap-header">
+                <span class="ap-header-title">PERFIL DE ARTISTA</span>
+                <button class="ap-close" id="ap-close" type="button" aria-label="Cerrar perfil">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+                         stroke="#ffffff" stroke-width="2.4" stroke-linecap="round">
+                        <line x1="6" y1="6"  x2="18" y2="18"/>
+                        <line x1="18" y1="6" x2="6"  y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="ap-scroll" id="ap-scroll">
+                <div class="ap-hero" id="ap-hero">
+                    <img class="ap-hero-img" id="ap-hero-img" alt="Portada del artista" loading="lazy">
+                    <div class="ap-hero-shade"></div>
+                    <h1 class="ap-artist-name" id="ap-artist-name">Artista</h1>
+                </div>
+
+                <div class="ap-stats">
+                    <div class="ap-total">
+                        <span class="ap-total-label">Total de Reproducciones:</span>
+                        <span class="ap-total-value" id="ap-total-plays">0</span>
+                    </div>
+                    <button class="ap-listen-btn" id="ap-listen-btn" type="button">Escuchar mi música</button>
+                </div>
+
+                <div class="ap-grid" id="ap-grid"></div>
+            </div>
         </div>
 
     </div>
