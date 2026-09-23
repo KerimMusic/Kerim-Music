@@ -862,7 +862,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     /* ============================================================
-       NUEVA FUNCIÓN: Título clickeable en pantalla completa
+       Título clickeable en pantalla completa
        ============================================================ */
     (function initFsTitleArtistLink() {
         const fsTitleEl = document.getElementById('fs-title');
@@ -1358,31 +1358,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    6. REPETIR + ALEATORIO (PANTALLA COMPLETA)
-   ------------------------------------------------------------
-   Módulo 100% independiente. NO modifica ninguna función
-   existente: agrega dos botones dentro de .fs-actions (encima
-   del botón "Me Gusta") y controla el modo de reproducción.
-
-   · Repetir   → Desactivado / Repetir todo / Repetir 1 canción
-   · Aleatorio → Activado / Desactivado
-
-   IMPORTANTE:
-   La función "Repetir" SOLO controla la reproducción.
-   NO suma reproducciones adicionales, NO activa el botón de
-   Me gusta, NO lo quita, NO reinicia el bloqueo de 30 días
-   y NO permite generar reproducciones extra usando Repetir.
    ============================================================ */
 (function () {
     'use strict';
 
-    /* ---------- Claves de persistencia ---------- */
     const REPEAT_KEY  = 'omega_repeat_mode_v1';
     const SHUFFLE_KEY = 'omega_shuffle_v1';
     const LIKES_KEY   = 'omega_likes_v1';
 
-    /* ---------- Estado ---------- */
-    let repeatMode = 'off';   /* 'off' | 'all' | 'one' */
-    let shuffleOn  = true;    /* por defecto se conserva el comportamiento aleatorio actual */
+    let repeatMode = 'off';
+    let shuffleOn  = true;
 
     try {
         const r = localStorage.getItem(REPEAT_KEY);
@@ -1400,7 +1385,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (_) {}
     }
 
-    /* ---------- Iconos (mismo trazo que el resto del reproductor) ---------- */
     const ICON_REPEAT = `
         <svg viewBox="0 0 24 24" aria-hidden="true">
             <polyline points="17 1 21 5 17 9"/>
@@ -1419,11 +1403,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <line x1="4" y1="4" x2="9" y2="9"/>
         </svg>`;
 
-    /* ---------- Referencias ---------- */
     let repeatBtn  = null;
     let shuffleBtn = null;
 
-    /* ---------- Utilidades ---------- */
     function haptic() {
         if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
     }
@@ -1446,7 +1428,6 @@ document.addEventListener('DOMContentLoaded', () => {
         el._omegaModeTimer = setTimeout(() => el.classList.remove('visible'), 1600);
     }
 
-    /* ---------- UI ---------- */
     function updateRepeatUI() {
         if (!repeatBtn) return;
         repeatBtn.classList.toggle('active', repeatMode !== 'off');
@@ -1467,18 +1448,12 @@ document.addEventListener('DOMContentLoaded', () => {
         shuffleBtn.setAttribute('title', aria);
     }
 
-    /* ---------- Aplicar el modo repetir al <audio> ----------
-       NO usamos el loop nativo del elemento <audio>. Así el evento
-       "ended" siempre dispara y podemos decidir manualmente si
-       repetir la canción SIN tocar el sistema de reproducciones
-       ni el de Me gusta. */
     function applyRepeatToAudio() {
         const audio = document.getElementById('audio-player');
         if (!audio) return;
         try { audio.loop = false; } catch (_) {}
     }
 
-    /* ---------- Lista secuencial (respeta el modo artista) ---------- */
     function getSequentialList() {
         const playlist = document.getElementById('playlist');
         if (!playlist) return [];
@@ -1492,12 +1467,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return all;
     }
 
-    /* ---------- Registro de reproducción completada ----------
-       Solo registra la PRIMERA vez que la canción se completa.
-       Si ya está marcada como "Me gusta", no suma reproducción
-       adicional, no reinicia el bloqueo de 30 días y no altera
-       el estado del Me gusta. Por eso, repetir una canción NO
-       genera reproducciones extra. */
     function registrarReproduccionCompletada(item) {
         if (!item || typeof normalizeStr !== 'function') return;
 
@@ -1524,7 +1493,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    /* ---------- Fin de lista ---------- */
     function detenerAlFinal(audio) {
         try { audio.pause(); } catch (_) {}
         try { audio.currentTime = 0; } catch (_) {}
@@ -1541,22 +1509,10 @@ document.addEventListener('DOMContentLoaded', () => {
         try { audio.dispatchEvent(new Event('pause')); } catch (_) {}
     }
 
-    /* ---------- Interceptor del evento "ended" (fase captura) ---------- */
     function onEndedCapture(e) {
         const audio = document.getElementById('audio-player');
         if (!audio || e.target !== audio) return;
 
-        /* ============================================================
-           REPETIR 1 CANCIÓN
-           ------------------------------------------------------------
-           Registramos la reproducción SOLO la primera vez que la
-           canción se completa (si aún no tiene "Me gusta"). En las
-           repeticiones posteriores, registrarReproduccionCompletada()
-           detecta que ya está marcada y NO suma reproducciones, NO
-           reactiva el Me gusta, NO lo quita y NO reinicia el bloqueo
-           de 30 días. Después reiniciamos la pista y la reproducimos
-           de nuevo.
-           ============================================================ */
         if (repeatMode === 'one') {
             e.stopPropagation();
 
@@ -1569,17 +1525,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        /* Aleatorio activado → comportamiento aleatorio original */
         if (shuffleOn) return;
 
-        /* ============================================================
-           SECUENCIAL (Repetir todo / Repetir desactivado)
-           ------------------------------------------------------------
-           registrarReproduccionCompletada() solo suma la primera vez
-           que se completa cada canción. Al dar la vuelta a la lista
-           (repeatMode === 'all'), las canciones ya están marcadas y
-           no vuelven a sumar.
-           ============================================================ */
         e.stopPropagation();
 
         const playlist = document.getElementById('playlist');
@@ -1610,7 +1557,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    /* ---------- Construcción de los botones ---------- */
     let started = false;
 
     function init() {
@@ -1680,5 +1626,214 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('DOMContentLoaded', () => bootWithRetry(0));
     } else {
         bootWithRetry(0);
+    }
+})();
+
+/* ============================================================
+   7. ORGANIZACIÓN POR ÁLBUMES EN EL PERFIL DEL ARTISTA
+   ------------------------------------------------------------
+   Módulo 100% independiente.
+   NO modifica ninguna función existente (reproductor,
+   reproducciones, Me gusta, búsqueda, perfil, etc.).
+
+   Qué hace:
+   · Observa el grid del perfil del artista (#ap-grid).
+   · Cuando el perfil se renderiza con las tarjetas (.ap-card)
+     creadas por el código original, las reagrupa por álbum.
+   · Un álbum se identifica por el <span class="Album"> dentro
+     de cada .playlist-item.
+   · Las canciones SIN álbum se muestran como TEMAS independientes.
+   · Las tarjetas originales se conservan tal cual (mismos
+     event listeners, mismo estado "playing", mismo click), solo
+     cambian de contenedor padre.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    let observer      = null;
+    let reorganizing  = false;
+    let bootRetries   = 0;
+
+    /* ---------- Utilidades ---------- */
+    function getItemTitle(item) {
+        if (!item) return '';
+        return item.querySelector('.item-title')?.textContent.trim() || '';
+    }
+
+    function getAlbumFromItem(item) {
+        if (!item) return '';
+        const el = item.querySelector('.Album');
+        return el ? el.textContent.trim() : '';
+    }
+
+    /* ---------- Reorganización del grid ---------- */
+    function reorganizeGrid() {
+        if (reorganizing) return;
+
+        const apGrid   = document.getElementById('ap-grid');
+        const playlist = document.getElementById('playlist');
+        if (!apGrid || !playlist) return;
+
+        /* Solo trabajamos con tarjetas que son hijas DIRECTAS del grid.
+           Si ya está reorganizado, aquí no habrá .ap-card directas. */
+        const directCards = Array.from(apGrid.children)
+            .filter(el => el.classList && el.classList.contains('ap-card'));
+
+        if (directCards.length === 0) return;
+
+        /* Mapa título -> item original de la lista */
+        const itemByTitle = new Map();
+        playlist.querySelectorAll('.playlist-item').forEach(it => {
+            const t = getItemTitle(it);
+            if (t) itemByTitle.set(t, it);
+        });
+
+        const albums      = new Map();   // nombre -> { cover, cards:[] }
+        const standalones = [];          // tarjetas sin álbum
+
+        directCards.forEach(card => {
+            const title     = card.dataset.title || '';
+            const item      = itemByTitle.get(title);
+            const albumName = getAlbumFromItem(item);
+
+            if (albumName) {
+                if (!albums.has(albumName)) {
+                    const cover = item.querySelector('.thumbnail img')?.src || '';
+                    albums.set(albumName, { cover, cards: [] });
+                }
+                albums.get(albumName).cards.push(card);
+            } else {
+                standalones.push(card);
+            }
+        });
+
+        /* Si no hay ningún álbum, no tocamos nada: dejamos el
+           grid tal como lo renderizó el código original. */
+        if (albums.size === 0) return;
+
+        reorganizing = true;
+
+        /* Desconectar el observer mientras movemos nodos para
+           evitar que nuestras propias mutaciones disparen callbacks. */
+        if (observer) observer.disconnect();
+
+        try {
+            /* Desanexar todas las tarjetas originales del grid. */
+            directCards.forEach(c => c.remove());
+
+            /* ---------- Secciones de ÁLBUMES ---------- */
+            albums.forEach((albumData, albumName) => {
+                const albumEl = document.createElement('div');
+                albumEl.className = 'ap-album';
+
+                const header = document.createElement('button');
+                header.type = 'button';
+                header.className = 'ap-album-header';
+                header.setAttribute('aria-expanded', 'false');
+                header.setAttribute('aria-label', 'Álbum ' + albumName);
+
+                if (albumData.cover) {
+                    const img = document.createElement('img');
+                    img.src     = albumData.cover;
+                    img.alt     = albumName;
+                    img.loading = 'lazy';
+                    header.appendChild(img);
+                }
+
+                const info = document.createElement('div');
+                info.className = 'ap-album-info';
+
+                const label = document.createElement('span');
+                label.className   = 'ap-album-label';
+                label.textContent = 'ÁLBUM';
+                info.appendChild(label);
+
+                const titleEl = document.createElement('span');
+                titleEl.className   = 'ap-album-title';
+                titleEl.textContent = albumName;
+                info.appendChild(titleEl);
+
+                const countEl = document.createElement('span');
+                countEl.className   = 'ap-album-count';
+                countEl.textContent = albumData.cards.length + ' ' +
+                    (albumData.cards.length === 1 ? 'canción' : 'canciones');
+                info.appendChild(countEl);
+
+                header.appendChild(info);
+
+                const arrow = document.createElement('span');
+                arrow.className   = 'ap-album-arrow';
+                arrow.textContent = '▶';
+                arrow.setAttribute('aria-hidden', 'true');
+                header.appendChild(arrow);
+
+                header.addEventListener('click', () => {
+                    const isExpanded = albumEl.classList.toggle('expanded');
+                    header.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+                });
+
+                albumEl.appendChild(header);
+
+                const tracks = document.createElement('div');
+                tracks.className = 'ap-album-tracks';
+                albumData.cards.forEach(c => tracks.appendChild(c));
+                albumEl.appendChild(tracks);
+
+                apGrid.appendChild(albumEl);
+            });
+
+            /* ---------- Sección TEMAS (sin álbum) ---------- */
+            if (standalones.length > 0) {
+                const th = document.createElement('div');
+                th.className   = 'ap-temas-header';
+                th.textContent = 'TEMAS';
+                apGrid.appendChild(th);
+
+                const tg = document.createElement('div');
+                tg.className = 'ap-temas-grid';
+                standalones.forEach(c => tg.appendChild(c));
+                apGrid.appendChild(tg);
+            }
+
+        } finally {
+            reorganizing = false;
+
+            /* Reconectar el observer para la próxima vez que
+               el perfil se re-renderice (otro artista, búsqueda, etc.). */
+            if (observer) {
+                observer.observe(apGrid, { childList: true });
+            }
+        }
+    }
+
+    /* ---------- Arranque ---------- */
+    function init() {
+        const apGrid = document.getElementById('ap-grid');
+        if (!apGrid) {
+            if (bootRetries++ < 40) setTimeout(init, 150);
+            return;
+        }
+
+        observer = new MutationObserver(() => {
+            if (reorganizing) return;
+
+            /* ¿Hay tarjetas hijas DIRECTAS? Si no, no hay nada que hacer. */
+            const hasDirectCards = Array.from(apGrid.children).some(
+                el => el.classList && el.classList.contains('ap-card')
+            );
+            if (!hasDirectCards) return;
+
+            /* El render original es síncrono; el observer ya dispara
+               con el grid completamente poblado, así que reorganizamos. */
+            reorganizeGrid();
+        });
+
+        observer.observe(apGrid, { childList: true });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
