@@ -235,8 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return Array.from(playlist.querySelectorAll('.playlist-item'));
     }
 
-    /* 🔀 NUEVO: consulta el estado actual del modo Aleatorio.
-       El módulo 6 lo publica en window.__omegaShuffleOn. */
+    /* 🔀 consulta el estado actual del modo Aleatorio. */
     function isShuffleOn() {
         return window.__omegaShuffleOn !== false;
     }
@@ -330,9 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
         handleLoadError(currentItem);
     });
 
-    /* 🔀 playRandomItem ahora respeta el modo Aleatorio:
-       - ON  → elige una pista al azar distinta a la actual.
-       - OFF → avanza secuencialmente al siguiente (con wrap). */
+    /* 🔀 playRandomItem respeta el modo Aleatorio. */
     function playRandomItem() {
         const items = getCandidateItems();
         if (items.length === 0) return;
@@ -401,9 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadItem(prev, true);
     }
 
-    // 🔀 NO barajamos el DOM: se conserva el orden original del HTML
-    // para que el modo "Aleatorio OFF" reproduzca secuencialmente.
-    // shufflePlaylist();
+    // 🔀 NO barajamos el DOM
 
     playButton.addEventListener('click', () => {
         if (!currentItem) {
@@ -1487,7 +1482,6 @@ document.addEventListener('DOMContentLoaded', () => {
         repeatBtn.setAttribute('title', aria);
     }
 
-    /* 🔀 Actualiza UI y PUBLICА el estado global que usa el reproductor. */
     function updateShuffleUI() {
         if (!shuffleBtn) return;
         shuffleBtn.classList.toggle('active', shuffleOn);
@@ -1495,7 +1489,6 @@ document.addEventListener('DOMContentLoaded', () => {
         shuffleBtn.setAttribute('aria-label', aria);
         shuffleBtn.setAttribute('title', aria);
 
-        // Exponer el estado para que el módulo 3 lo respete.
         window.__omegaShuffleOn = shuffleOn;
     }
 
@@ -1853,5 +1846,364 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
+    }
+})();
+
+/* ============================================================
+   8. PORTADA / CATEGORÍAS (HOME)
+   - Artistas únicos (ALEATORIO)
+   - Volver a escuchar (historial local)
+   - A lo mejor te guste (menos reproducciones, aleatorio)
+   - Lo más escuchado (> 20 reproducciones, aleatorio)
+   - Álbumes de artistas (aleatorio → perfil del artista)
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const HISTORY_KEY    = 'omega_history_v1';
+    const MAX_HISTORY    = 80;
+    const CAROUSEL_LIMIT = 12;
+
+    const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
+    function norm(str) {
+        if (typeof normalizeStr === 'function') return normalizeStr(str);
+        return String(str || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function getItemTitle(item) {
+        return item.querySelector('.item-title')?.textContent.trim() || '';
+    }
+    function getItemCover(item) {
+        const img = item.querySelector('.thumbnail img');
+        return img ? (img.getAttribute('src') || '') : '';
+    }
+    function getItemArtists(item) {
+        const sub = item.querySelector('.item-subtitle')?.textContent || '';
+        const idx = sub.indexOf('·');
+        const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+        if (!namePart) return [];
+        const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
+        return parts.length ? parts : [namePart];
+    }
+    function getItemAlbum(item) {
+        const el = item.querySelector('.Album');
+        return el ? el.textContent.trim() : '';
+    }
+    function getPlays(item) {
+        if (typeof findFirebaseDoc !== 'function') return 0;
+        const doc = findFirebaseDoc(getItemTitle(item));
+        if (doc && doc.data && typeof doc.data.reproducciones === 'number') {
+            return doc.data.reproducciones;
+        }
+        return 0;
+    }
+
+    function shuffle(arr) {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+
+    function getAllItems() {
+        const pl = document.getElementById('playlist');
+        if (!pl) return [];
+        return Array.from(pl.querySelectorAll('.playlist-item'));
+    }
+
+    function findItemByTitle(title) {
+        const n = norm(title);
+        if (!n) return null;
+        return getAllItems().find(it => norm(getItemTitle(it)) === n) || null;
+    }
+
+    function clearNode(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
+    function readHistory() {
+        try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+        catch (_) { return []; }
+    }
+    function pushHistory(title) {
+        if (!title) return;
+        const n = norm(title);
+        if (!n) return;
+        let arr = readHistory().filter(x => norm(x) !== n);
+        arr.unshift(title);
+        if (arr.length > MAX_HISTORY) arr.length = MAX_HISTORY;
+        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch (_) {}
+    }
+
+    function makeSongCard(item) {
+        const title = getItemTitle(item);
+        const cover = getItemCover(item);
+        const sub   = item.querySelector('.item-subtitle')?.textContent.trim() || '';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'home-card';
+        btn.setAttribute('aria-label', title);
+
+        const thumb = document.createElement('div');
+        thumb.className = 'home-card-thumb';
+        if (cover) {
+            const img = document.createElement('img');
+            img.src = cover; img.alt = title; img.loading = 'lazy';
+            thumb.appendChild(img);
+        }
+        btn.appendChild(thumb);
+
+        const t = document.createElement('span');
+        t.className = 'home-card-title';
+        t.textContent = title;
+        btn.appendChild(t);
+
+        if (sub) {
+            const s = document.createElement('span');
+            s.className = 'home-card-sub';
+            s.textContent = sub;
+            btn.appendChild(s);
+        }
+
+        btn.addEventListener('click', () => { item.click(); });
+        return btn;
+    }
+
+    /* 🔀 ARTISTAS EN ORDEN ALEATORIO */
+    function buildArtists() {
+        const sec = document.getElementById('sec-artists');
+        const carousel = document.getElementById('carousel-artists');
+        if (!sec || !carousel) return;
+        clearNode(carousel);
+
+        const map = new Map();
+        getAllItems().forEach(item => {
+            getItemArtists(item).forEach(name => {
+                const n = norm(name);
+                if (!n || map.has(n)) return;
+                map.set(n, { name, cover: getItemCover(item) });
+            });
+        });
+
+        if (map.size === 0) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+
+        // 🔀 Barajamos los artistas antes de pintarlos
+        const artists = shuffle(Array.from(map.values()));
+
+        artists.forEach(({ name, cover }) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'home-card home-card--artist';
+            btn.setAttribute('aria-label', name);
+
+            const thumb = document.createElement('div');
+            thumb.className = 'home-card-thumb';
+            if (cover) {
+                const img = document.createElement('img');
+                img.src = cover; img.alt = name; img.loading = 'lazy';
+                thumb.appendChild(img);
+            }
+            btn.appendChild(thumb);
+
+            const t = document.createElement('span');
+            t.className = 'home-card-title';
+            t.textContent = name;
+            btn.appendChild(t);
+
+            btn.addEventListener('click', () => {
+                if (typeof window.__openArtistProfile === 'function') {
+                    window.__openArtistProfile(name);
+                }
+            });
+            carousel.appendChild(btn);
+        });
+    }
+
+    function buildListenAgain() {
+        const sec = document.getElementById('sec-listen-again');
+        const carousel = document.getElementById('carousel-listen-again');
+        if (!sec || !carousel) return;
+        clearNode(carousel);
+
+        const history = readHistory();
+        const seen = new Set();
+        const items = [];
+        for (const title of history) {
+            const n = norm(title);
+            if (!n || seen.has(n)) continue;
+            const it = findItemByTitle(title);
+            if (!it) continue;
+            seen.add(n);
+            items.push(it);
+            if (items.length >= CAROUSEL_LIMIT) break;
+        }
+
+        if (items.length === 0) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        items.forEach(it => carousel.appendChild(makeSongCard(it)));
+    }
+
+    function buildMaybe() {
+        const sec = document.getElementById('sec-maybe');
+        const carousel = document.getElementById('carousel-maybe');
+        if (!sec || !carousel) return;
+        clearNode(carousel);
+
+        const scored = getAllItems().map(it => ({ it, plays: getPlays(it) }));
+        if (!scored.length) { sec.style.display = 'none'; return; }
+
+        scored.sort((a, b) => a.plays - b.plays);
+        const take = Math.max(6, Math.ceil(scored.length / 2));
+        const pool = scored.slice(0, take).map(x => x.it);
+        const picked = shuffle(pool).slice(0, CAROUSEL_LIMIT);
+
+        if (!picked.length) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        picked.forEach(it => carousel.appendChild(makeSongCard(it)));
+    }
+
+    function buildTop() {
+        const sec = document.getElementById('sec-top');
+        const carousel = document.getElementById('carousel-top');
+        if (!sec || !carousel) return;
+        clearNode(carousel);
+
+        const pool = getAllItems().filter(it => getPlays(it) > 20);
+        const picked = shuffle(pool).slice(0, CAROUSEL_LIMIT);
+
+        if (!picked.length) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+        picked.forEach(it => carousel.appendChild(makeSongCard(it)));
+    }
+
+    function buildAlbums() {
+        const sec = document.getElementById('sec-albums');
+        const carousel = document.getElementById('carousel-albums');
+        if (!sec || !carousel) return;
+        clearNode(carousel);
+
+        const map = new Map();
+        getAllItems().forEach(item => {
+            const album = getItemAlbum(item);
+            if (!album) return;
+            const artist = getItemArtists(item)[0] || '';
+            const key = norm(album) + '::' + norm(artist);
+            if (map.has(key)) return;
+            map.set(key, {
+                name: album,
+                cover: getItemCover(item),
+                artist
+            });
+        });
+
+        if (map.size === 0) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+
+        const albums = shuffle(Array.from(map.values())).slice(0, CAROUSEL_LIMIT);
+
+        albums.forEach(alb => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'home-card';
+            btn.setAttribute('aria-label', alb.name);
+
+            const thumb = document.createElement('div');
+            thumb.className = 'home-card-thumb';
+            if (alb.cover) {
+                const img = document.createElement('img');
+                img.src = alb.cover; img.alt = alb.name; img.loading = 'lazy';
+                thumb.appendChild(img);
+            }
+            btn.appendChild(thumb);
+
+            const t = document.createElement('span');
+            t.className = 'home-card-title';
+            t.textContent = alb.name;
+            btn.appendChild(t);
+
+            if (alb.artist) {
+                const s = document.createElement('span');
+                s.className = 'home-card-sub';
+                s.textContent = alb.artist;
+                btn.appendChild(s);
+            }
+
+            btn.addEventListener('click', () => {
+                if (alb.artist && typeof window.__openArtistProfile === 'function') {
+                    window.__openArtistProfile(alb.artist);
+                }
+            });
+            carousel.appendChild(btn);
+        });
+    }
+
+    function buildAll() {
+        buildArtists();
+        buildListenAgain();
+        buildMaybe();
+        buildTop();
+        buildAlbums();
+    }
+
+    function initHistoryTracking() {
+        const audio = document.getElementById('audio-player');
+        const pl    = document.getElementById('playlist');
+        if (!audio || !pl) return;
+
+        audio.addEventListener('play', () => {
+            const active = pl.querySelector('.playlist-item.active');
+            if (active) pushHistory(getItemTitle(active));
+        });
+
+        audio.addEventListener('ended', () => {
+            setTimeout(() => {
+                buildListenAgain();
+                buildMaybe();
+                buildTop();
+            }, 400);
+        });
+    }
+
+    function initSearchToggle() {
+        const input = document.getElementById('search-input');
+        const home  = document.getElementById('home-view');
+        if (!input || !home) return;
+
+        input.addEventListener('input', (e) => {
+            const has = (e.target.value || '').trim().length > 0;
+            home.style.display = has ? 'none' : '';
+        });
+    }
+
+    function boot() {
+        let tries = 0;
+        (function loop() {
+            tries++;
+            const hasItems = getAllItems().length > 0;
+            const fbReady  = (typeof firebaseDocsCache !== 'undefined') &&
+                             firebaseDocsCache.length > 0;
+
+            if (hasItems && (fbReady || tries >= 20)) {
+                buildAll();
+                initHistoryTracking();
+                initSearchToggle();
+                return;
+            }
+            if (tries >= 40) return;
+            setTimeout(loop, 200);
+        })();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
     }
 })();
