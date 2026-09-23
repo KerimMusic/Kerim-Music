@@ -110,6 +110,32 @@ async function cambiarReproducciones(item, delta) {
 }
 
 /* ============================================================
+   🔥 MODO ARTISTA (GLOBAL)
+   ------------------------------------------------------------
+   Cuando está activo, TODA reproducción (auto-next, aleatoria,
+   al terminar, etc.) se restringe a las canciones del artista.
+   Se desactiva SOLO si el usuario pulsa manualmente una canción
+   que NO pertenece al artista filtrado.
+   ============================================================ */
+window.__artistFilter      = null;  // Array de .playlist-item del artista
+window.__artistFilterName  = '';    // Nombre del artista (para logs)
+
+function clearArtistFilter() {
+    window.__artistFilter     = null;
+    window.__artistFilterName = '';
+    document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: false } }));
+}
+
+function setArtistFilter(items, name) {
+    if (!items || !items.length) return;
+    window.__artistFilter     = items.slice();
+    window.__artistFilterName = name || '';
+    document.dispatchEvent(new CustomEvent('omega:artistmode', {
+        detail: { active: true, name: name || '' }
+    }));
+}
+
+/* ============================================================
    2. CONFIGURACIÓN DE ANUNCIOS
    ============================================================ */
 const ADS = [
@@ -230,6 +256,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return item.dataset.cover || '';
     }
 
+    /* 🔥 Ahora respeta el modo artista */
+    function getCandidateItems() {
+        const all = getAllItems();
+        if (window.__artistFilter && window.__artistFilter.length) {
+            const filtered = all.filter(i => window.__artistFilter.includes(i));
+            if (filtered.length) return filtered;
+        }
+        return all;
+    }
+
     function shufflePlaylist() {
         const items = getAllItems();
         for (let i = items.length - 1; i > 0; i--) {
@@ -266,8 +302,6 @@ document.addEventListener('DOMContentLoaded', () => {
         currentTimeEl.textContent = '0:00';
         durationEl.textContent = '0:00';
 
-        // 🔥 NOTA: la reproducción solo se registra cuando la canción
-        // llega al 100% (ver el listener 'ended' más abajo).
         if (autoplay) {
             audioPlayer.play().catch(err => {
                 console.warn('No se pudo iniciar automáticamente:', err);
@@ -296,16 +330,38 @@ document.addEventListener('DOMContentLoaded', () => {
         handleLoadError(currentItem);
     });
 
+    /* 🔥 playRandomItem ahora respeta el modo artista */
     function playRandomItem() {
-        const items = getAllItems();
+        const items = getCandidateItems();
         if (items.length === 0) return;
 
         let candidates = items;
-        if (items.length > 1 && currentItem) {
+        if (items.length > 1 && currentItem && items.includes(currentItem)) {
             candidates = items.filter(i => i !== currentItem);
         }
+        if (candidates.length === 0) candidates = items;
+
         const randomItem = candidates[Math.floor(Math.random() * candidates.length)];
         loadItem(randomItem, true);
+    }
+
+    /* 🔥 goNext / goPrev también respetan el modo artista */
+    function goNextItem() {
+        const items = getCandidateItems();
+        if (!items.length) return;
+        let idx = items.indexOf(currentItem);
+        if (idx === -1) idx = 0;
+        const next = items[(idx + 1) % items.length];
+        loadItem(next, true);
+    }
+
+    function goPrevItem() {
+        const items = getCandidateItems();
+        if (!items.length) return;
+        let idx = items.indexOf(currentItem);
+        if (idx === -1) idx = 0;
+        const prev = items[(idx - 1 + items.length) % items.length];
+        loadItem(prev, true);
     }
 
     shufflePlaylist();
@@ -336,9 +392,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    /* ============================================================
-       🔥 ESCUCHA COMPLETA → +1 reproducción + Me gusta automático
-       ============================================================ */
     audioPlayer.addEventListener('ended', async () => {
         const duration  = audioPlayer.duration;
         const played    = audioPlayer.currentTime;
@@ -354,8 +407,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = getLikeData(key);
                 const alreadyLiked = !!(data && data.liked !== false);
 
-                // Solo registra +1 si aún no estaba likeada
-                // (evita inflar el contador reescuchando la misma canción)
                 if (!alreadyLiked) {
                     setLikeData(key, { liked: true, ts: Date.now(), locked: true });
                     updateLikeUI();
@@ -364,6 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        /* 🔥 La siguiente canción respeta el modo artista */
         playRandomItem();
     });
 
@@ -374,9 +426,18 @@ document.addEventListener('DOMContentLoaded', () => {
         audioPlayer.currentTime = Math.min(1, Math.max(0, ratio)) * audioPlayer.duration;
     });
 
+    /* 🔥 Si el usuario pulsa manualmente una canción FUERA del artista,
+       se desactiva el modo artista. */
     playlist.addEventListener('click', (e) => {
         const item = e.target.closest('.playlist-item');
         if (!item) return;
+
+        if (window.__artistFilter && window.__artistFilter.length) {
+            if (!window.__artistFilter.includes(item)) {
+                clearArtistFilter();
+            }
+        }
+
         loadItem(item, true);
     });
 
@@ -539,13 +600,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const fsTitle     = document.getElementById('fs-title');
     const fsClose     = document.getElementById('fs-close');
 
-    /* ============================================================
-       🔥 ME GUSTA (por usuario, persistente + bloqueo 30 días)
-       ============================================================ */
     const fsLikeBtn    = document.getElementById('fs-like');
 
     const LIKES_KEY    = 'omega_likes_v1';
-    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000; // 30 días en milisegundos
+    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000;
 
     function _readMap(key) {
         try { return JSON.parse(localStorage.getItem(key) || '{}'); }
@@ -560,21 +618,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return normalizeStr(item.querySelector('.item-title')?.textContent.trim() || '');
     }
 
-    /* Devuelve { liked, ts, locked } o null. Compatible con formato antiguo (true) */
     function getLikeData(key) {
         if (!key) return null;
         const likes = _readMap(LIKES_KEY);
         const val = likes[key];
         if (val === undefined || val === null || val === false) return null;
         if (val === true) {
-            // Formato antiguo (sin bloqueo): se respeta como like válido
             return { liked: true, ts: 0, locked: false };
         }
         if (typeof val === 'object') return val;
         return null;
     }
 
-    /* ¿El Me gusta está bloqueado (dentro de los 30 días)? */
     function isLikeLocked(key) {
         const data = getLikeData(key);
         if (!data || !data.locked) return false;
@@ -596,7 +651,6 @@ document.addEventListener('DOMContentLoaded', () => {
         _writeMap(LIKES_KEY, likes);
     }
 
-    /* Notificación visual (toast) */
     function showNotification(message) {
         let toast = document.getElementById('omega-toast');
         if (!toast) {
@@ -608,7 +662,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         toast.textContent = message;
         toast.classList.remove('visible');
-        void toast.offsetWidth; // reinicia la animación
+        void toast.offsetWidth;
         toast.classList.add('visible');
         clearTimeout(toast._hideTimer);
         toast._hideTimer = setTimeout(() => {
@@ -628,13 +682,11 @@ document.addEventListener('DOMContentLoaded', () => {
         fsLikeBtn.classList.toggle('active', isLiked);
     }
 
-    /* Click en Me gusta: bloqueo de 30 días tras dar like */
     fsLikeBtn.addEventListener('click', async () => {
         if (!currentItem) return;
         const key = getItemKey(currentItem);
         if (!key) return;
 
-        // 🔒 Bloqueado: solo mostrar notificación, sin tocar contador
         if (isLikeLocked(key)) {
             showNotification(
                 'No puedes manipular el botón de Me gusta durante 30 días. ' +
@@ -646,12 +698,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = getLikeData(key);
 
         if (data && data.liked !== false) {
-            // Quitar Me gusta (ya pasaron los 30 días) → -1 reproducción
             removeLikeData(key);
             updateLikeUI();
             await cambiarReproducciones(currentItem, -1);
         } else {
-            // Dar Me gusta manual → +1 reproducción + bloqueo 30 días
             setLikeData(key, { liked: true, ts: Date.now(), locked: true });
             updateLikeUI();
             await cambiarReproducciones(currentItem, 1);
@@ -676,7 +726,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         fsTitle.textContent = newTitle;
 
-        updateLikeUI(); // 👈 Actualiza estado Me gusta (con bloqueo)
+        updateLikeUI();
     }
 
     const syncObserver = new MutationObserver(() => syncFromMini());
@@ -768,8 +818,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (dt > 1200) return;
         if (absY > 50 && absY > absX * 1.3) {
-            if (dy < 0) goNext();
-            else        goPrev();
+            /* 🔥 Ahora usan el modo artista */
+            if (dy < 0) goNextItem();
+            else        goPrevItem();
         }
     });
 
@@ -804,27 +855,16 @@ document.addEventListener('DOMContentLoaded', () => {
         updateVinylState();
     }
 
+    /* Estas funciones ahora se conectan al modo artista */
     function goNext() {
-        const items = getItems();
-        if (!items.length) return;
-        let idx = getActiveIndex();
-        if (idx === -1) idx = 0;
-        const nextIdx = (idx + 1) % items.length;
-
         animateSlide('up');
-        items[nextIdx].click();
+        goNextItem();
         setTimeout(resetVinylSpin, 60);
     }
 
     function goPrev() {
-        const items = getItems();
-        if (!items.length) return;
-        let idx = getActiveIndex();
-        if (idx === -1) idx = 0;
-        const prevIdx = (idx - 1 + items.length) % items.length;
-
         animateSlide('down');
-        items[prevIdx].click();
+        goPrevItem();
         setTimeout(resetVinylSpin, 60);
     }
 
@@ -834,9 +874,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    /* ============================================================
-       🔥 INICIALIZAR FIREBASE Y PINTAR REPRODUCCIONES
-       ============================================================ */
     (async () => {
         await cargarDocsDeFirebase();
         pintarTodasLasReproducciones();
@@ -1042,5 +1079,255 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
+    }
+})();
+
+/* ============================================================
+   5. PERFIL DEL ARTISTA (NUEVO)
+   ------------------------------------------------------------
+   El perfil permanece abierto hasta que el usuario lo cierre
+   explícitamente (botón X o tecla Escape). Al pulsar
+   "Escuchar mi música" o cualquier canción del grid, se activa
+   el MODO ARTISTA: solo sonarán canciones de ese artista.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    function initArtistProfile() {
+        const profileEl   = document.getElementById('artist-profile');
+        const apScroll    = document.getElementById('ap-scroll');
+        const apHeroImg   = document.getElementById('ap-hero-img');
+        const apArtist    = document.getElementById('ap-artist-name');
+        const apTotal     = document.getElementById('ap-total-plays');
+        const apGrid      = document.getElementById('ap-grid');
+        const apClose     = document.getElementById('ap-close');
+        const apListen    = document.getElementById('ap-listen-btn');
+        const searchInput = document.getElementById('search-input');
+        const playlist    = document.getElementById('playlist');
+
+        if (!profileEl || !apGrid || !playlist || typeof normalizeStr !== 'function') return;
+
+        let currentArtist   = null;
+        let refreshTimer    = null;
+        let gridObserver    = null;
+        const COLLAB_SPLIT  = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
+        /* --- Utilidades de artista --- */
+        function getArtistsFromItem(item) {
+            const sub = item.querySelector('.item-subtitle')?.textContent || '';
+            const idx = sub.indexOf('·');
+            const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+            if (!namePart) return [];
+            const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
+            return parts.length ? parts : [namePart];
+        }
+
+        function getAllArtistsMap() {
+            const map = new Map();
+            playlist.querySelectorAll('.playlist-item').forEach(item => {
+                getArtistsFromItem(item).forEach(name => {
+                    const n = normalizeStr(name);
+                    if (n && !map.has(n)) map.set(n, name);
+                });
+            });
+            return map;
+        }
+
+        function getArtistItems(artistName) {
+            const target = normalizeStr(artistName);
+            if (!target) return [];
+            return Array.from(playlist.querySelectorAll('.playlist-item')).filter(item =>
+                getArtistsFromItem(item).some(n => normalizeStr(n) === target)
+            );
+        }
+
+        function computeTotalPlays(items) {
+            let total = 0;
+            items.forEach(item => {
+                const title = item.querySelector('.item-title')?.textContent.trim() || '';
+                const doc = findFirebaseDoc(title);
+                if (doc && typeof doc.data.reproducciones === 'number') {
+                    total += doc.data.reproducciones;
+                }
+            });
+            return total;
+        }
+
+        function formatNumber(n) {
+            try { return (n || 0).toLocaleString('es-MX'); }
+            catch (_) { return String(n || 0); }
+        }
+
+        /* --- Marcar en el grid qué canción está sonando --- */
+        function updatePlayingCard() {
+            const active = playlist.querySelector('.playlist-item.active');
+            const activeTitle = active
+                ? (active.querySelector('.item-title')?.textContent.trim() || '')
+                : '';
+
+            apGrid.querySelectorAll('.ap-card').forEach(card => {
+                if (activeTitle && card.dataset.title === activeTitle) {
+                    card.classList.add('playing');
+                } else {
+                    card.classList.remove('playing');
+                }
+            });
+        }
+
+        /* --- Activa el MODO ARTISTA (solo sus canciones) --- */
+        function activateArtistMode(artistName) {
+            const list = getArtistItems(artistName);
+            if (!list.length) return null;
+            if (typeof setArtistFilter === 'function') {
+                setArtistFilter(list, artistName);
+            } else {
+                window.__artistFilter = list.slice();
+                window.__artistFilterName = artistName;
+            }
+            console.log(`🎤 Modo artista ACTIVADO: ${artistName} (${list.length} canciones)`);
+            return list;
+        }
+
+        /* --- Render del perfil --- */
+        function renderProfile(artistName) {
+            currentArtist = artistName;
+            const items = getArtistItems(artistName);
+            if (!items.length) return;
+
+            apArtist.textContent = artistName;
+
+            /* Portada aleatoria tomada de las canciones del artista */
+            const covers = items
+                .map(i => i.querySelector('.thumbnail img')?.src)
+                .filter(Boolean);
+
+            if (covers.length) {
+                const chosen = covers[Math.floor(Math.random() * covers.length)];
+                apHeroImg.classList.remove('loaded');
+                apHeroImg.src = chosen;
+                if (apHeroImg.complete) {
+                    apHeroImg.classList.add('loaded');
+                } else {
+                    apHeroImg.onload = () => apHeroImg.classList.add('loaded');
+                }
+            } else {
+                apHeroImg.removeAttribute('src');
+                apHeroImg.classList.remove('loaded');
+            }
+
+            /* Total de reproducciones */
+            apTotal.textContent = formatNumber(computeTotalPlays(items));
+
+            /* Cuadrícula de canciones */
+            apGrid.innerHTML = '';
+            items.forEach(item => {
+                const cover = item.querySelector('.thumbnail img')?.src || '';
+                const title = item.querySelector('.item-title')?.textContent.trim() || '';
+
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'ap-card';
+                card.dataset.title = title;
+                card.setAttribute('aria-label', title);
+
+                if (cover) {
+                    const img = document.createElement('img');
+                    img.src = cover;
+                    img.alt = title;
+                    img.loading = 'lazy';
+                    card.appendChild(img);
+                }
+                const t = document.createElement('span');
+                t.className = 'ap-card-title';
+                t.textContent = title;
+                card.appendChild(t);
+
+                /* 🔥 Al pulsar una canción: reproduce + ACTIVA modo artista */
+                card.addEventListener('click', () => {
+                    activateArtistMode(artistName);
+                    item.click();
+                    setTimeout(updatePlayingCard, 60);
+                });
+
+                apGrid.appendChild(card);
+            });
+
+            /* 🔥 "Escuchar mi música": activa el MODO ARTISTA y suena
+               una canción aleatoria del artista. Al terminar, la siguiente
+               también será del mismo artista. */
+            apListen.onclick = () => {
+                const list = activateArtistMode(artistName);
+                if (!list || !list.length) return;
+                const randomIdx = Math.floor(Math.random() * list.length);
+                list[randomIdx].click();
+                setTimeout(updatePlayingCard, 60);
+            };
+
+            /* Refresco automático del total mientras el perfil está abierto */
+            if (refreshTimer) clearInterval(refreshTimer);
+            refreshTimer = setInterval(() => {
+                if (!profileEl.classList.contains('visible') || !currentArtist) return;
+                const cur = getArtistItems(currentArtist);
+                apTotal.textContent = formatNumber(computeTotalPlays(cur));
+            }, 1500);
+
+            /* Observar cambios de .active en la playlist para mantener el grid sincronizado */
+            if (gridObserver) gridObserver.disconnect();
+            gridObserver = new MutationObserver(() => updatePlayingCard());
+            gridObserver.observe(playlist, {
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class']
+            });
+
+            if (apScroll) apScroll.scrollTop = 0;
+
+            updatePlayingCard();
+        }
+
+        /* --- Abrir / Cerrar (SOLO con X o Escape) --- */
+        function openProfile(artistName) {
+            renderProfile(artistName);
+            profileEl.classList.add('visible');
+            profileEl.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeProfile() {
+            profileEl.classList.remove('visible');
+            profileEl.setAttribute('aria-hidden', 'true');
+            currentArtist = null;
+            if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+            if (gridObserver) { gridObserver.disconnect(); gridObserver = null; }
+            /* NO se desactiva el modo artista aquí: la música sigue sonando
+               solo del artista hasta que el usuario elija otra canción. */
+        }
+
+        if (apClose) apClose.addEventListener('click', closeProfile);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && profileEl.classList.contains('visible')) {
+                closeProfile();
+            }
+        });
+
+        /* --- Disparador: búsqueda exacta de un artista --- */
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                const q = normalizeStr(e.target.value);
+                if (!q) return;
+                const artists = getAllArtistsMap();
+                if (artists.has(q)) {
+                    openProfile(artists.get(q));
+                }
+            });
+        }
+
+        window.__openArtistProfile = openProfile;
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initArtistProfile);
+    } else {
+        initArtistProfile();
     }
 })();
