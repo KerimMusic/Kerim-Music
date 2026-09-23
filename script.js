@@ -235,6 +235,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return Array.from(playlist.querySelectorAll('.playlist-item'));
     }
 
+    /* 🔀 NUEVO: consulta el estado actual del modo Aleatorio.
+       El módulo 6 lo publica en window.__omegaShuffleOn. */
+    function isShuffleOn() {
+        return window.__omegaShuffleOn !== false;
+    }
+
     function getItemTitle(item) {
         if (!item) return '';
         return (
@@ -324,9 +330,22 @@ document.addEventListener('DOMContentLoaded', () => {
         handleLoadError(currentItem);
     });
 
+    /* 🔀 playRandomItem ahora respeta el modo Aleatorio:
+       - ON  → elige una pista al azar distinta a la actual.
+       - OFF → avanza secuencialmente al siguiente (con wrap). */
     function playRandomItem() {
         const items = getCandidateItems();
         if (items.length === 0) return;
+
+        if (!isShuffleOn()) {
+            let startIdx = 0;
+            if (currentItem) {
+                const idx = items.indexOf(currentItem);
+                if (idx !== -1) startIdx = (idx + 1) % items.length;
+            }
+            loadItem(items[startIdx], true);
+            return;
+        }
 
         let candidates = items;
         if (items.length > 1 && currentItem && items.includes(currentItem)) {
@@ -338,25 +357,53 @@ document.addEventListener('DOMContentLoaded', () => {
         loadItem(randomItem, true);
     }
 
+    /* 🔀 goNextItem respeta el modo Aleatorio. */
     function goNextItem() {
         const items = getCandidateItems();
         if (!items.length) return;
+
+        if (isShuffleOn()) {
+            let candidates = items;
+            if (items.length > 1 && currentItem && items.includes(currentItem)) {
+                candidates = items.filter(i => i !== currentItem);
+            }
+            if (!candidates.length) candidates = items;
+            const randomItem = candidates[Math.floor(Math.random() * candidates.length)];
+            loadItem(randomItem, true);
+            return;
+        }
+
         let idx = items.indexOf(currentItem);
         if (idx === -1) idx = 0;
         const next = items[(idx + 1) % items.length];
         loadItem(next, true);
     }
 
+    /* 🔀 goPrevItem respeta el modo Aleatorio. */
     function goPrevItem() {
         const items = getCandidateItems();
         if (!items.length) return;
+
+        if (isShuffleOn()) {
+            let candidates = items;
+            if (items.length > 1 && currentItem && items.includes(currentItem)) {
+                candidates = items.filter(i => i !== currentItem);
+            }
+            if (!candidates.length) candidates = items;
+            const randomItem = candidates[Math.floor(Math.random() * candidates.length)];
+            loadItem(randomItem, true);
+            return;
+        }
+
         let idx = items.indexOf(currentItem);
         if (idx === -1) idx = 0;
         const prev = items[(idx - 1 + items.length) % items.length];
         loadItem(prev, true);
     }
 
-    shufflePlaylist();
+    // 🔀 NO barajamos el DOM: se conserva el orden original del HTML
+    // para que el modo "Aleatorio OFF" reproduzca secuencialmente.
+    // shufflePlaylist();
 
     playButton.addEventListener('click', () => {
         if (!currentItem) {
@@ -1440,12 +1487,16 @@ document.addEventListener('DOMContentLoaded', () => {
         repeatBtn.setAttribute('title', aria);
     }
 
+    /* 🔀 Actualiza UI y PUBLICА el estado global que usa el reproductor. */
     function updateShuffleUI() {
         if (!shuffleBtn) return;
         shuffleBtn.classList.toggle('active', shuffleOn);
         const aria = shuffleOn ? 'Aleatorio activado' : 'Aleatorio desactivado';
         shuffleBtn.setAttribute('aria-label', aria);
         shuffleBtn.setAttribute('title', aria);
+
+        // Exponer el estado para que el módulo 3 lo respete.
+        window.__omegaShuffleOn = shuffleOn;
     }
 
     function applyRepeatToAudio() {
@@ -1631,21 +1682,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    7. ORGANIZACIÓN POR ÁLBUMES EN EL PERFIL DEL ARTISTA
-   ------------------------------------------------------------
-   Módulo 100% independiente.
-   NO modifica ninguna función existente (reproductor,
-   reproducciones, Me gusta, búsqueda, perfil, etc.).
-
-   Qué hace:
-   · Observa el grid del perfil del artista (#ap-grid).
-   · Cuando el perfil se renderiza con las tarjetas (.ap-card)
-     creadas por el código original, las reagrupa por álbum.
-   · Un álbum se identifica por el <span class="Album"> dentro
-     de cada .playlist-item.
-   · Las canciones SIN álbum se muestran como TEMAS independientes.
-   · Las tarjetas originales se conservan tal cual (mismos
-     event listeners, mismo estado "playing", mismo click), solo
-     cambian de contenedor padre.
    ============================================================ */
 (function () {
     'use strict';
@@ -1654,7 +1690,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let reorganizing  = false;
     let bootRetries   = 0;
 
-    /* ---------- Utilidades ---------- */
     function getItemTitle(item) {
         if (!item) return '';
         return item.querySelector('.item-title')?.textContent.trim() || '';
@@ -1666,7 +1701,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return el ? el.textContent.trim() : '';
     }
 
-    /* ---------- Reorganización del grid ---------- */
     function reorganizeGrid() {
         if (reorganizing) return;
 
@@ -1674,22 +1708,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const playlist = document.getElementById('playlist');
         if (!apGrid || !playlist) return;
 
-        /* Solo trabajamos con tarjetas que son hijas DIRECTAS del grid.
-           Si ya está reorganizado, aquí no habrá .ap-card directas. */
         const directCards = Array.from(apGrid.children)
             .filter(el => el.classList && el.classList.contains('ap-card'));
 
         if (directCards.length === 0) return;
 
-        /* Mapa título -> item original de la lista */
         const itemByTitle = new Map();
         playlist.querySelectorAll('.playlist-item').forEach(it => {
             const t = getItemTitle(it);
             if (t) itemByTitle.set(t, it);
         });
 
-        const albums      = new Map();   // nombre -> { cover, cards:[] }
-        const standalones = [];          // tarjetas sin álbum
+        const albums      = new Map();
+        const standalones = [];
 
         directCards.forEach(card => {
             const title     = card.dataset.title || '';
@@ -1707,21 +1738,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        /* Si no hay ningún álbum, no tocamos nada: dejamos el
-           grid tal como lo renderizó el código original. */
         if (albums.size === 0) return;
 
         reorganizing = true;
 
-        /* Desconectar el observer mientras movemos nodos para
-           evitar que nuestras propias mutaciones disparen callbacks. */
         if (observer) observer.disconnect();
 
         try {
-            /* Desanexar todas las tarjetas originales del grid. */
             directCards.forEach(c => c.remove());
 
-            /* ---------- Secciones de ÁLBUMES ---------- */
             albums.forEach((albumData, albumName) => {
                 const albumEl = document.createElement('div');
                 albumEl.className = 'ap-album';
@@ -1782,7 +1807,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 apGrid.appendChild(albumEl);
             });
 
-            /* ---------- Sección TEMAS (sin álbum) ---------- */
             if (standalones.length > 0) {
                 const th = document.createElement('div');
                 th.className   = 'ap-temas-header';
@@ -1798,15 +1822,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             reorganizing = false;
 
-            /* Reconectar el observer para la próxima vez que
-               el perfil se re-renderice (otro artista, búsqueda, etc.). */
             if (observer) {
                 observer.observe(apGrid, { childList: true });
             }
         }
     }
 
-    /* ---------- Arranque ---------- */
     function init() {
         const apGrid = document.getElementById('ap-grid');
         if (!apGrid) {
@@ -1817,14 +1838,11 @@ document.addEventListener('DOMContentLoaded', () => {
         observer = new MutationObserver(() => {
             if (reorganizing) return;
 
-            /* ¿Hay tarjetas hijas DIRECTAS? Si no, no hay nada que hacer. */
             const hasDirectCards = Array.from(apGrid.children).some(
                 el => el.classList && el.classList.contains('ap-card')
             );
             if (!hasDirectCards) return;
 
-            /* El render original es síncrono; el observer ya dispara
-               con el grid completamente poblado, así que reorganizamos. */
             reorganizeGrid();
         });
 
