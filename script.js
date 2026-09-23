@@ -1357,7 +1357,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   6. NUEVO: REPETIR + ALEATORIO (PANTALLA COMPLETA)
+   6. REPETIR + ALEATORIO (PANTALLA COMPLETA)
    ------------------------------------------------------------
    Módulo 100% independiente. NO modifica ninguna función
    existente: agrega dos botones dentro de .fs-actions (encima
@@ -1365,6 +1365,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
    · Repetir   → Desactivado / Repetir todo / Repetir 1 canción
    · Aleatorio → Activado / Desactivado
+
+   IMPORTANTE:
+   La función "Repetir" SOLO controla la reproducción.
+   NO suma reproducciones adicionales, NO activa el botón de
+   Me gusta, NO lo quita, NO reinicia el bloqueo de 30 días
+   y NO permite generar reproducciones extra usando Repetir.
    ============================================================ */
 (function () {
     'use strict';
@@ -1461,11 +1467,15 @@ document.addEventListener('DOMContentLoaded', () => {
         shuffleBtn.setAttribute('title', aria);
     }
 
-    /* ---------- Aplicar el modo repetir al <audio> ---------- */
+    /* ---------- Aplicar el modo repetir al <audio> ----------
+       NO usamos el loop nativo del elemento <audio>. Así el evento
+       "ended" siempre dispara y podemos decidir manualmente si
+       repetir la canción SIN tocar el sistema de reproducciones
+       ni el de Me gusta. */
     function applyRepeatToAudio() {
         const audio = document.getElementById('audio-player');
         if (!audio) return;
-        try { audio.loop = (repeatMode === 'one'); } catch (_) {}
+        try { audio.loop = false; } catch (_) {}
     }
 
     /* ---------- Lista secuencial (respeta el modo artista) ---------- */
@@ -1482,7 +1492,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return all;
     }
 
-    /* ---------- Registro de reproducción completada ---------- */
+    /* ---------- Registro de reproducción completada ----------
+       Solo registra la PRIMERA vez que la canción se completa.
+       Si ya está marcada como "Me gusta", no suma reproducción
+       adicional, no reinicia el bloqueo de 30 días y no altera
+       el estado del Me gusta. Por eso, repetir una canción NO
+       genera reproducciones extra. */
     function registrarReproduccionCompletada(item) {
         if (!item || typeof normalizeStr !== 'function') return;
 
@@ -1531,9 +1546,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const audio = document.getElementById('audio-player');
         if (!audio || e.target !== audio) return;
 
-        /* Repetir 1 canción */
+        /* ============================================================
+           REPETIR 1 CANCIÓN
+           ------------------------------------------------------------
+           Registramos la reproducción SOLO la primera vez que la
+           canción se completa (si aún no tiene "Me gusta"). En las
+           repeticiones posteriores, registrarReproduccionCompletada()
+           detecta que ya está marcada y NO suma reproducciones, NO
+           reactiva el Me gusta, NO lo quita y NO reinicia el bloqueo
+           de 30 días. Después reiniciamos la pista y la reproducimos
+           de nuevo.
+           ============================================================ */
         if (repeatMode === 'one') {
             e.stopPropagation();
+
+            const activeItem = document.querySelector('.playlist-item.active');
+            if (activeItem) registrarReproduccionCompletada(activeItem);
+
             try { audio.currentTime = 0; } catch (_) {}
             const p = audio.play();
             if (p && p.catch) p.catch(() => {});
@@ -1543,7 +1572,14 @@ document.addEventListener('DOMContentLoaded', () => {
         /* Aleatorio activado → comportamiento aleatorio original */
         if (shuffleOn) return;
 
-        /* Secuencial */
+        /* ============================================================
+           SECUENCIAL (Repetir todo / Repetir desactivado)
+           ------------------------------------------------------------
+           registrarReproduccionCompletada() solo suma la primera vez
+           que se completa cada canción. Al dar la vuelta a la lista
+           (repeatMode === 'all'), las canciones ya están marcadas y
+           no vuelven a sumar.
+           ============================================================ */
         e.stopPropagation();
 
         const playlist = document.getElementById('playlist');
