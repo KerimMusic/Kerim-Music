@@ -1,5 +1,115 @@
 /* ============================================================
-   CONFIGURACIÓN DE ANUNCIOS
+   1. CONFIGURACIÓN DE FIREBASE
+   ============================================================ */
+// ⚠️ REEMPLAZA ESTO CON TUS CREDENCIALES REALES DE FIREBASE
+const firebaseConfig = {
+    apiKey: "TU_API_KEY",
+    authDomain: "kerim-music-a9c46.firebaseapp.com",
+    projectId: "kerim-music-a9c46",
+    storageBucket: "kerim-music-a9c46.appspot.com",
+    messagingSenderId: "TU_SENDER_ID",
+    appId: "TU_APP_ID"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+/* Cache de documentos de Firebase */
+let firebaseDocsCache = [];
+
+/* Normalizar string (quita tildes, espacios, mayúsculas) */
+function normalizeStr(str) {
+    return String(str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '');
+}
+
+/* Buscar el documento de Firebase que corresponde a un título del HTML */
+function findFirebaseDoc(songTitle) {
+    if (!songTitle || firebaseDocsCache.length === 0) return null;
+    const nTitle = normalizeStr(songTitle);
+    if (!nTitle) return null;
+
+    for (const doc of firebaseDocsCache) {
+        if (normalizeStr(doc.id) === nTitle) return doc;
+    }
+    for (const doc of firebaseDocsCache) {
+        const nId = normalizeStr(doc.id);
+        if (nId.includes(nTitle) || nTitle.includes(nId)) return doc;
+    }
+    const prefix = nTitle.substring(0, Math.min(nTitle.length, 6));
+    if (prefix.length >= 4) {
+        for (const doc of firebaseDocsCache) {
+            if (normalizeStr(doc.id).startsWith(prefix)) return doc;
+        }
+    }
+    return null;
+}
+
+/* Cargar todos los docs de Firebase */
+async function cargarDocsDeFirebase() {
+    try {
+        const snap = await db.collection('Radio_Muisc').get();
+        firebaseDocsCache = snap.docs.map(d => ({
+            id: d.id,
+            ref: d.ref,
+            data: d.data()
+        }));
+        console.log(`🔥 Firebase: ${firebaseDocsCache.length} canciones cargadas`);
+    } catch (e) {
+        console.warn('⚠️ No se pudieron cargar docs de Firebase:', e);
+    }
+}
+
+/* Mostrar contador de reproducciones en un item */
+function pintarReproducciones(item, count) {
+    if (!item) return;
+    const info = item.querySelector('.item-info');
+    if (!info) return;
+
+    let badge = info.querySelector('.item-plays');
+    if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'item-plays';
+        info.appendChild(badge);
+    }
+    badge.textContent = `▶ ${count}`;
+}
+
+/* Pintar todos los contadores según Firebase */
+function pintarTodasLasReproducciones() {
+    document.querySelectorAll('.playlist-item').forEach(item => {
+        const title = item.querySelector('.item-title')?.textContent.trim() || '';
+        const doc = findFirebaseDoc(title);
+        if (doc) {
+            pintarReproducciones(item, doc.data.reproducciones || 0);
+        }
+    });
+}
+
+/* Incrementar reproducciones de un item */
+async function incrementarReproduccion(item) {
+    if (!item) return;
+    const title = item.querySelector('.item-title')?.textContent.trim() || '';
+    const doc = findFirebaseDoc(title);
+    if (!doc) return;
+
+    try {
+        await doc.ref.update({
+            reproducciones: firebase.firestore.FieldValue.increment(1)
+        });
+        doc.data.reproducciones = (doc.data.reproducciones || 0) + 1;
+        pintarReproducciones(item, doc.data.reproducciones);
+        console.log(`▶ +1 a "${doc.id}" (total: ${doc.data.reproducciones})`);
+    } catch (e) {
+        console.warn('No se pudo incrementar reproducciones:', e);
+    }
+}
+
+/* ============================================================
+   2. CONFIGURACIÓN DE ANUNCIOS
    ============================================================ */
 const ADS = [
   { id: 'ad9', url: 'https://www.dropbox.com/scl/fi/l41bs2ooxh6ccnewgnvd1/1785466259517.png?rlkey=czf0bcn58v0irh5qdfeg9tnef&st=pbd0d7v5&raw=1', title: 'Anuncio 9', category: 'ANUNCIO', music: 'https://www.dropbox.com/scl/fi/9tsc6vvge3ukcao3w8hiy/elimina-basura-spotyfi.mp3?rlkey=pogumn7wjmhepbtocb16km25w&st=3oh3m9tu&raw=1', isAd: true },
@@ -14,7 +124,7 @@ const ADS = [
 ];
 
 /* ============================================================
-   REPRODUCTOR PRINCIPAL
+   3. REPRODUCTOR PRINCIPAL
    ============================================================ */
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -36,7 +146,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const ICON_PAUSE = '<rect x="6" y="4" width="4" height="16" fill="#ffffff" />' +
                        '<rect x="14" y="4" width="4" height="16" fill="#ffffff" />';
 
-    /* ---------- Haptics + Ripple ---------- */
     function haptic(ms) {
         if (navigator.vibrate) {
             try { navigator.vibrate(ms || 12); } catch (_) {}
@@ -81,7 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
         el.style.setProperty('--ripple-color', 'rgba(255, 255, 255, 0.10)');
     });
 
-    /* ---------- Utilidades ---------- */
     function formatTime(seconds) {
         if (!isFinite(seconds) || seconds < 0) return '0:00';
         const minutes = Math.floor(seconds / 60);
@@ -121,7 +229,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return item.dataset.cover || '';
     }
 
-    /* ---------- Mezclar ---------- */
     function shufflePlaylist() {
         const items = getAllItems();
         for (let i = items.length - 1; i > 0; i--) {
@@ -131,7 +238,6 @@ document.addEventListener('DOMContentLoaded', () => {
         items.forEach(item => playlist.appendChild(item));
     }
 
-    /* ---------- Cargar item ---------- */
     function loadItem(item, autoplay = true) {
         if (!item) return;
 
@@ -160,7 +266,10 @@ document.addEventListener('DOMContentLoaded', () => {
         durationEl.textContent = '0:00';
 
         if (autoplay) {
-            audioPlayer.play().catch(err => {
+            audioPlayer.play().then(() => {
+                // 🔥 INCREMENTAR REPRODUCCIÓN EN FIREBASE
+                incrementarReproduccion(item);
+            }).catch(err => {
                 console.warn('No se pudo iniciar automáticamente:', err);
             });
         }
@@ -201,7 +310,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     shufflePlaylist();
 
-    /* ---------- Play ---------- */
     playButton.addEventListener('click', () => {
         if (!currentItem) {
             playRandomItem();
@@ -214,7 +322,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    /* ---------- Eventos de audio ---------- */
     audioPlayer.addEventListener('play',  () => updateIcon(true));
     audioPlayer.addEventListener('pause', () => updateIcon(false));
 
@@ -236,7 +343,6 @@ document.addEventListener('DOMContentLoaded', () => {
         playRandomItem();
     });
 
-    /* ---------- Buscar en barra de progreso ---------- */
     progressBar.addEventListener('click', (e) => {
         if (!audioPlayer.duration) return;
         const rect  = progressBar.getBoundingClientRect();
@@ -244,14 +350,12 @@ document.addEventListener('DOMContentLoaded', () => {
         audioPlayer.currentTime = Math.min(1, Math.max(0, ratio)) * audioPlayer.duration;
     });
 
-    /* ---------- Lista ---------- */
     playlist.addEventListener('click', (e) => {
         const item = e.target.closest('.playlist-item');
         if (!item) return;
         loadItem(item, true);
     });
 
-    /* ---------- Sincronización de portadas ---------- */
     const coverObserver = new MutationObserver(mutations => {
         mutations.forEach(mutation => {
             const img  = mutation.target;
@@ -273,7 +377,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    /* ---------- Buscar (corazón) ---------- */
     const heartSearchBtn  = document.getElementById('heart-search-btn');
     const searchContainer = document.getElementById('search-container');
     const searchInput     = document.getElementById('search-input');
@@ -307,7 +410,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    /* ---------- Compartir ---------- */
     const shareBtn = document.getElementById('share-btn');
     const SHARE_URL = 'https://kerimmusic.github.io/DescargarAppOmegaBeats/';
 
@@ -336,7 +438,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    /* ---------- Submenú ---------- */
     const menuBtn         = document.getElementById('menu-btn');
     const submenu         = document.getElementById('submenu');
     const submenuOverlay  = document.getElementById('submenu-overlay');
@@ -369,15 +470,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     /* ============================================================
-       REPRODUCTOR A PANTALLA COMPLETA (VINILO + SWIPE VERTICAL)
+       FULLSCREEN PLAYER
        ============================================================ */
     if (!player || !audioPlayer || !playlist || !playerCover || !playerTitle || !playButton) return;
 
-    /* ---------- 1. INYECTAR HTML ---------- */
     const fsHTML = `
         <div class="fs-player" id="fs-player" aria-hidden="true">
             <div class="fs-bg" id="fs-bg"></div>
-
             <div class="fs-top-bar">
                 <button class="fs-close" id="fs-close" aria-label="Cerrar">
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none"
@@ -387,7 +486,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     </svg>
                 </button>
             </div>
-
             <div class="fs-content" id="fs-content">
                 <div class="fs-vinyl-wrap" id="fs-vinyl-wrap">
                     <div class="fs-vinyl" id="fs-vinyl">
@@ -395,166 +493,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <span class="fs-spindle"></span>
                 </div>
-
                 <h2 class="fs-title" id="fs-title">Título del Beat</h2>
             </div>
         </div>
     `;
     document.body.insertAdjacentHTML('beforeend', fsHTML);
 
-    /* ---------- 2. INYECTAR CSS ---------- */
-    const styleEl = document.createElement('style');
-    styleEl.id = 'fs-player-styles';
-    styleEl.textContent = `
-    .fs-player {
-        position: fixed;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        background: #050505;
-        z-index: 900;
-        display: flex;
-        flex-direction: column;
-        transform: translateY(100%);
-        transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
-        overflow: hidden;
-        touch-action: none;
-        -webkit-user-select: none;
-        user-select: none;
-        -webkit-tap-highlight-color: transparent;
-    }
-    .fs-player.visible { transform: translateY(0); }
-    .fs-player:not(.visible) { pointer-events: none; }
-
-    .fs-bg {
-        position: absolute;
-        inset: -10%;
-        background-size: cover;
-        background-position: center;
-        filter: blur(60px) brightness(0.35) saturate(1.15);
-        transform: scale(1.2);
-        z-index: 0;
-        pointer-events: none;
-        transition: background-image 0.4s ease;
-    }
-
-    .fs-top-bar {
-        position: relative;
-        z-index: 3;
-        display: flex;
-        justify-content: flex-end;
-        padding: 18px 18px 0;
-        flex-shrink: 0;
-    }
-
-    .fs-close {
-        background: rgba(255,255,255,0.08);
-        border: none;
-        border-radius: 50%;
-        width: 42px;
-        height: 42px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: background 0.2s ease, transform 0.15s ease;
-    }
-    .fs-close:active {
-        transform: scale(0.9);
-        background: rgba(255,255,255,0.18);
-    }
-
-    .fs-content {
-        position: relative;
-        z-index: 2;
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 34px;
-        padding: 0 30px 50px;
-        transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.32s ease;
-        min-height: 0;
-    }
-
-    .fs-vinyl-wrap {
-        position: relative;
-        width: min(72vw, 62vh, 380px);
-        aspect-ratio: 1 / 1;
-        cursor: pointer;
-        flex-shrink: 0;
-    }
-
-    .fs-vinyl {
-        width: 100%;
-        height: 100%;
-        border-radius: 50%;
-        overflow: hidden;
-        background: #0a0a0a;
-        box-shadow:
-            0 0 0 12px #0b0b0b,
-            0 0 0 14px #1c1c1c,
-            0 0 0 15px #060606,
-            0 25px 60px rgba(0,0,0,0.85),
-            0 0 90px rgba(255,42,42,0.10);
-        animation: fs-spin 14s linear infinite;
-        animation-play-state: paused;
-        position: relative;
-        will-change: transform;
-    }
-    .fs-vinyl.playing { animation-play-state: running; }
-
-    .fs-cover {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        object-position: center;
-        display: block;
-        border-radius: 50%;
-        pointer-events: none;
-    }
-
-    .fs-spindle {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        background: radial-gradient(circle at 35% 35%, #3a3a3a 0%, #111 45%, #000 100%);
-        transform: translate(-50%, -50%);
-        box-shadow:
-            inset 0 2px 4px rgba(255,255,255,0.20),
-            0 0 0 3px rgba(0,0,0,0.60);
-        pointer-events: none;
-        z-index: 2;
-    }
-
-    @keyframes fs-spin {
-        from { transform: rotate(0deg); }
-        to   { transform: rotate(360deg); }
-    }
-
-    .fs-title {
-        font-size: clamp(20px, 5.4vw, 28px);
-        font-weight: 800;
-        line-height: 1.25;
-        text-align: center;
-        color: #ffffff;
-        max-width: 100%;
-        word-break: break-word;
-        text-shadow: 0 2px 12px rgba(0,0,0,0.65);
-        padding: 0 8px;
-    }
-
-    @media (max-height: 640px) {
-        .fs-content { gap: 20px; padding-bottom: 26px; }
-    }
-    `;
-    document.head.appendChild(styleEl);
-
-    /* ---------- 3. REFERENCIAS ---------- */
     const fsPlayer    = document.getElementById('fs-player');
     const fsBg        = document.getElementById('fs-bg');
     const fsContent   = document.getElementById('fs-content');
@@ -563,7 +507,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const fsTitle     = document.getElementById('fs-title');
     const fsClose     = document.getElementById('fs-close');
 
-    /* ---------- 4. SINCRONIZACIÓN ---------- */
     let lastCoverSrc = '';
 
     function syncFromMini() {
@@ -595,7 +538,6 @@ document.addEventListener('DOMContentLoaded', () => {
     audioPlayer.addEventListener('pause', updateVinylState);
     audioPlayer.addEventListener('ended', updateVinylState);
 
-    /* ---------- 5. ABRIR / CERRAR ---------- */
     function openFullscreen() {
         if (!playlist.querySelector('.playlist-item.active')) {
             playButton.click();
@@ -616,7 +558,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     fsClose.addEventListener('click', closeFullscreen);
 
-    /* ---------- 6. GESTOS ROBUSTOS ---------- */
     function attachGesture(el, onGesture) {
         el.addEventListener('pointerdown', (e) => {
             if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -679,7 +620,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    /* ---------- 7. NAVEGACIÓN TIPO TIKTOK ---------- */
     function getItems() {
         return Array.from(playlist.querySelectorAll('.playlist-item'));
     }
@@ -735,30 +675,31 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(resetVinylSpin, 60);
     }
 
-    /* ---------- 8. TECLA ESC ---------- */
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && fsPlayer.classList.contains('visible')) {
             closeFullscreen();
         }
     });
 
+    /* ============================================================
+       🔥 INICIALIZAR FIREBASE Y PINTAR REPRODUCCIONES
+       ============================================================ */
+    (async () => {
+        await cargarDocsDeFirebase();
+        pintarTodasLasReproducciones();
+    })();
+
 });
 
 /* ============================================================
-   GESTOR DE ANUNCIOS
-   - Un anuncio de audio/video cada 6 beats.
-   - No modifica portada, título, controles ni fullscreen.
+   4. GESTOR DE ANUNCIOS
    ============================================================ */
 (function () {
     'use strict';
 
     function init() {
-
         var audioPlayer = document.getElementById('audio-player');
-        if (!audioPlayer) {
-            console.warn('Anuncios: no se encontró #audio-player.');
-            return;
-        }
+        if (!audioPlayer) { console.warn('Anuncios: no se encontró #audio-player.'); return; }
         if (typeof ADS === 'undefined' || !Array.isArray(ADS) || ADS.length === 0) {
             console.warn('Anuncios: la lista ADS no está disponible.');
             return;
@@ -778,7 +719,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         var originalPlay = audioPlayer.play.bind(audioPlayer);
 
-        /* ---------- OVERLAY ---------- */
         var overlay = document.createElement('div');
         overlay.id = 'ad-overlay';
         overlay.setAttribute('aria-hidden', 'true');
@@ -795,7 +735,6 @@ document.addEventListener('DOMContentLoaded', () => {
         var adMedia = overlay.querySelector('.ad-media');
         var adSkip  = overlay.querySelector('.ad-skip');
 
-        /* ---------- INTERCEPTAR play() ---------- */
         audioPlayer.play = function () {
             if (isAdPlaying) return Promise.resolve();
 
@@ -804,7 +743,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (isNewBeat) {
                 lastSrc = src;
-
                 if (beatPlayCount >= BEATS_PER_AD) {
                     beatPlayCount = 0;
                     showAd(function () {
@@ -817,7 +755,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return originalPlay();
         };
 
-        /* ---------- MOSTRAR ANUNCIO ---------- */
         function showAd(onComplete) {
             if (isAdPlaying) return;
             isAdPlaying  = true;
@@ -912,7 +849,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        /* ---------- TERMINAR ANUNCIO ---------- */
         function endAd() {
             if (!isAdPlaying) return;
             isAdPlaying = false;
@@ -942,7 +878,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (cb) { try { cb(); } catch (e) { console.warn(e); } }
         }
 
-        /* ---------- BOTÓN SALTAR ---------- */
         adSkip.addEventListener('click', function () {
             if (adSkip.disabled) return;
             if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
