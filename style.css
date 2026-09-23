@@ -1132,3 +1132,19 @@ button:active {
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
     z-index: 3;
 }
+
+/* ============================================================
+   NUEVO: Feedback visual del título clicable en pantalla completa
+   ------------------------------------------------------------
+   Solo feedback táctil sutil; el diseño base de .fs-title
+   permanece intacto.
+   ============================================================ */
+#fs-title {
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: manipulation;
+    transition: opacity 0.15s ease;
+}
+#fs-title:active {
+    opacity: 0.75;
+}
