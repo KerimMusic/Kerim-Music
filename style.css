@@ -1135,9 +1135,6 @@ button:active {
 
 /* ============================================================
    NUEVO: Feedback visual del título clicable en pantalla completa
-   ------------------------------------------------------------
-   Solo feedback táctil sutil; el diseño base de .fs-title
-   permanece intacto.
    ============================================================ */
 #fs-title {
     cursor: pointer;
@@ -1147,4 +1144,74 @@ button:active {
 }
 #fs-title:active {
     opacity: 0.75;
+}
+
+/* ============================================================
+   NUEVO: BOTONES "REPETIR" Y "ALEATORIO" (PANTALLA COMPLETA)
+   ------------------------------------------------------------
+   Se insertan dentro de .fs-actions, ENCIMA del botón "Me Gusta",
+   respetando la distribución de la imagen de referencia:
+   Repetir (arriba) · Aleatorio (medio) · Me Gusta (abajo).
+   Mismo tamaño, espaciado y estilo que el botón "Me Gusta".
+   ============================================================ */
+.fs-mode-btn {
+    background: none;
+    border: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 8px;
+    margin: 0;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    line-height: 1;
+    transition: transform 0.15s ease, color 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+.fs-mode-btn:active {
+    transform: scale(0.92);
+}
+
+.fs-mode-btn svg {
+    width: 42px;
+    height: 42px;
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    overflow: visible;
+    transition: stroke 0.2s ease, transform 0.2s ease;
+}
+
+/* Estado ACTIVADO (igual que "Me Gusta") */
+.fs-mode-btn.active {
+    color: #ff2a2a;
+}
+.fs-mode-btn.active svg {
+    stroke: #ff2a2a;
+}
+
+.fs-mode-btn .fs-mode-label {
+    display: block;
+    white-space: nowrap;
+}
+
+/* Marca "1" del modo "Repetir 1 canción" */
+.fs-mode-btn svg .fs-repeat-one-mark {
+    fill: currentColor;
+    stroke: none;
+    display: none;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.fs-mode-btn.mode-one svg .fs-repeat-one-mark {
+    display: block;
 }
