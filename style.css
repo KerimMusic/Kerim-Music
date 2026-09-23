@@ -1207,11 +1207,6 @@ button:active {
 
 /* ============================================================
    NUEVO: ORGANIZACIÓN POR ÁLBUMES EN EL PERFIL DEL ARTISTA
-   ------------------------------------------------------------
-   Estas reglas SOLO afectan a los nuevos contenedores
-   (.ap-album, .ap-album-header, .ap-album-tracks, .ap-temas-*).
-   No modifican ni sobrescriben el estilo actual de .ap-grid,
-   .ap-card ni del resto del perfil.
    ============================================================ */
 
 /* Contenedor de cada álbum (ocupa todo el ancho del grid) */
