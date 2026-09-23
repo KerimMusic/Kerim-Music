@@ -800,3 +800,58 @@ button:active {
     color: #ff2a2a;
     letter-spacing: 0.5px;
 }
+
+/* ============================================================
+   BOTÓN ME GUSTA (pantalla completa)
+   ============================================================ */
+.fs-actions {
+    position: absolute;
+    bottom: 40px; /* Distancia desde abajo */
+    right: 20px;  /* Distancia desde la derecha */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    margin-top: 0;
+}
+
+.fs-like {
+    background: none;
+    border: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 8px;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    transition: transform 0.15s ease, color 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.fs-like:active {
+    transform: scale(0.92);
+}
+
+.fs-like svg {
+    width: 42px;
+    height: 42px;
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: fill 0.2s ease, stroke 0.2s ease, transform 0.2s ease;
+}
+
+/* Me gusta activo (rojo) */
+.fs-like.active {
+    color: #ff2a2a;
+}
+.fs-like.active svg {
+    fill: #ff2a2a;
+    stroke: #ff2a2a;
+}
