@@ -2705,9 +2705,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
 
         audio.addEventListener('play', function () {
-            try { 
-                window.Kodular.setWebViewString("PLAY"); 
-            } catch (_) {}
+            try { window.Kodular.setWebViewString("PLAY"); } catch (_) {}
         });
         audio.addEventListener('pause', function () {
             try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
@@ -2723,3 +2721,5 @@ document.addEventListener('DOMContentLoaded', () => {
         boot();
     }
 })();
+
+window.Kodular.setWebViewString("MOSTRAR_NOTIFICACION");
