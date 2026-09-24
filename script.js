@@ -2704,27 +2704,31 @@ document.addEventListener('DOMContentLoaded', () => {
 (function () {
     'use strict';
 
-    if (typeof window.Kodular === 'undefined' ||
-        typeof window.Kodular.setWebViewString !== 'function') {
-        return;
-    }
-
     function boot() {
         var audio = document.getElementById('audio-player');
         if (!audio) return;
 
-        try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
+        // Enviar un mensaje de prueba al cargar (opcional, pero útil)
+        if (typeof window.Kodular !== 'undefined' && window.Kodular.setWebViewString) {
+            try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
+        }
 
         audio.addEventListener('play', function () {
-            try { 
-                window.Kodular.setWebviewString("PRUEBA_DE_CONEXION");
-            } catch (_) {}
+            if (typeof window.Kodular !== 'undefined' && window.Kodular.setWebViewString) {
+                try { window.Kodular.setWebViewString("PLAY"); } catch (_) {}
+            }
         });
+        
         audio.addEventListener('pause', function () {
-            try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
+            if (typeof window.Kodular !== 'undefined' && window.Kodular.setWebViewString) {
+                try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
+            }
         });
+        
         audio.addEventListener('ended', function () {
-            try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
+            if (typeof window.Kodular !== 'undefined' && window.Kodular.setWebViewString) {
+                try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
+            }
         });
     }
 
