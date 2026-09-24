@@ -235,7 +235,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return Array.from(playlist.querySelectorAll('.playlist-item'));
     }
 
-    /* 🔀 consulta el estado actual del modo Aleatorio. */
     function isShuffleOn() {
         return window.__omegaShuffleOn !== false;
     }
@@ -329,7 +328,6 @@ document.addEventListener('DOMContentLoaded', () => {
         handleLoadError(currentItem);
     });
 
-    /* 🔀 playRandomItem respeta el modo Aleatorio. */
     function playRandomItem() {
         const items = getCandidateItems();
         if (items.length === 0) return;
@@ -354,7 +352,6 @@ document.addEventListener('DOMContentLoaded', () => {
         loadItem(randomItem, true);
     }
 
-    /* 🔀 goNextItem respeta el modo Aleatorio. */
     function goNextItem() {
         const items = getCandidateItems();
         if (!items.length) return;
@@ -376,7 +373,6 @@ document.addEventListener('DOMContentLoaded', () => {
         loadItem(next, true);
     }
 
-    /* 🔀 goPrevItem respeta el modo Aleatorio. */
     function goPrevItem() {
         const items = getCandidateItems();
         if (!items.length) return;
@@ -397,8 +393,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const prev = items[(idx - 1 + items.length) % items.length];
         loadItem(prev, true);
     }
-
-    // 🔀 NO barajamos el DOM
 
     playButton.addEventListener('click', () => {
         if (!currentItem) {
@@ -435,13 +429,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress(0);
         currentTimeEl.textContent = '0:00';
 
-        /* ============================================================
-           ✨ CAMBIO 1: RENOVACIÓN DEL PERÍODO DE 30 DÍAS
-           - Primera escucha completa → +1 reproducción + Me gusta.
-           - Escucha repetida        → se mantiene todo y se renueva
-             la fecha (ts) para que el período de 30 días vuelva a
-             empezar desde AHORA.
-           ============================================================ */
         if (completed && currentItem) {
             const key = getItemKey(currentItem);
             if (key) {
@@ -449,10 +436,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const alreadyLiked = !!(data && data.liked !== false);
 
                 if (alreadyLiked) {
-                    // 🔄 Ya tenía Me gusta → renovar período sin sumar.
                     setLikeData(key, { liked: true, ts: Date.now(), locked: true });
                 } else {
-                    // 🆕 Primera vez → +1 reproducción y Me gusta.
                     setLikeData(key, { liked: true, ts: Date.now(), locked: true });
                     updateLikeUI();
                     await cambiarReproducciones(currentItem, 1);
@@ -914,9 +899,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    /* ============================================================
-       Título clickeable en pantalla completa
-       ============================================================ */
     (function initFsTitleArtistLink() {
         const fsTitleEl = document.getElementById('fs-title');
         if (!fsTitleEl || !playlist) return;
@@ -1539,15 +1521,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const alreadyLiked = !!(data && typeof data === 'object' && data.liked !== false);
 
-        /* ============================================================
-           ✨ CAMBIO 2: RENOVACIÓN DEL PERÍODO DE 30 DÍAS
-           - Si ya tenía Me gusta → se RENUEVA la fecha (ts) y NO se
-             suma otra reproducción.
-           - Si es la primera vez → se crea el registro + Me gusta y
-             sí se suma la reproducción.
-           ============================================================ */
         if (alreadyLiked) {
-            // 🔄 Renueva el período sin sumar reproducción.
             map[key] = { liked: true, ts: Date.now(), locked: true };
             try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
             return;
@@ -1875,11 +1849,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    8. PORTADA / CATEGORÍAS (HOME)
-   - Artistas únicos (ALEATORIO)
-   - Volver a escuchar (historial local)
-   - A lo mejor te guste (menos reproducciones, aleatorio)
-   - Lo más escuchado (> 20 reproducciones, aleatorio)
-   - Álbumes de artistas (aleatorio → perfil del artista)
    ============================================================ */
 (function () {
     'use strict';
@@ -1999,7 +1968,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return btn;
     }
 
-    /* 🔀 ARTISTAS EN ORDEN ALEATORIO */
     function buildArtists() {
         const sec = document.getElementById('sec-artists');
         const carousel = document.getElementById('carousel-artists');
@@ -2018,7 +1986,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (map.size === 0) { sec.style.display = 'none'; return; }
         sec.style.display = '';
 
-        // 🔀 Barajamos los artistas antes de pintarlos
         const artists = shuffle(Array.from(map.values()));
 
         artists.forEach(({ name, cover }) => {
@@ -2233,23 +2200,13 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   9. EXPIRACIÓN AUTOMÁTICA DEL ME GUSTA (30 DÍAS)  ✨ NUEVO
-   ------------------------------------------------------------
-   - Si pasan 30 días sin una nueva escucha completa válida:
-       · Se elimina el Me gusta.
-       · Se elimina la reproducción asociada (-1 en Firebase).
-       · El usuario puede volver a generar el Me gusta.
-   - Si el usuario vuelve a escuchar antes, el período se
-     renueva (ya manejado en las secciones 3 y 6).
-   - Se ejecuta automáticamente al abrir la app y cada 5 min.
-   - No toca el reproductor, ni Repetir/Aleatorio, ni álbumes,
-     ni perfiles, ni anuncios.
+   9. EXPIRACIÓN AUTOMÁTICA DEL ME GUSTA (30 DÍAS)
    ============================================================ */
 (function () {
     'use strict';
 
     const LIKES_KEY    = 'omega_likes_v1';
-    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000; // 30 días
+    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000;
 
     function _read() {
         try { return JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); }
@@ -2289,7 +2246,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         claves.forEach(key => {
             const data = map[key];
-            // Solo procesamos entradas en formato objeto con lock activo.
             if (!data || typeof data !== 'object') return;
             if (data.liked === false) return;
             if (!data.locked) return;
@@ -2303,10 +2259,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!expirados.length) return;
 
         for (const key of expirados) {
-            // 1) Quitar el Me gusta del almacenamiento local
             delete map[key];
 
-            // 2) Quitar la reproducción asociada (-1 en Firebase)
             const item = _findItemByKey(key, playlist);
             if (item && typeof cambiarReproducciones === 'function') {
                 try { await cambiarReproducciones(item, -1); }
@@ -2314,10 +2268,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // 3) Persistir el mapa ya limpio
         _write(map);
 
-        // 4) Si la canción activa expiró, apagar el botón Me gusta
         try {
             const fsLikeBtn  = document.getElementById('fs-like');
             const activeItem = playlist ? playlist.querySelector('.playlist-item.active') : null;
@@ -2335,9 +2287,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function boot() {
-        // Pequeño retraso para asegurar que Firebase ya cargó los docs
         setTimeout(limpiarMeGustasExpirados, 2000);
-        // Revisión periódica cada 5 minutos
         setInterval(limpiarMeGustasExpirados, 5 * 60 * 1000);
     }
 
@@ -2345,5 +2295,478 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('DOMContentLoaded', boot);
     } else {
         boot();
+    }
+})();
+
+/* ============================================================
+   10. VISTA EXCLUSIVA DEL ÁLBUM
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+    const LIKES_KEY    = 'omega_likes_v1';
+
+    let albumItems    = [];
+    let albumQueue    = [];
+    let albumIndex    = 0;
+    let albumPlaying  = false;
+    let listMode      = false;
+    let internalClick = false;
+
+    let albumView = null, avTitle = null, avToggle = null, avScroll = null,
+        avCarousel = null, avList = null, avPlayAll = null, avBack = null;
+
+    function norm(str) {
+        if (typeof normalizeStr === 'function') return normalizeStr(str);
+        return String(str || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function clearNode(el) {
+        while (el && el.firstChild) el.removeChild(el.firstChild);
+    }
+
+    function getPlaylist() { return document.getElementById('playlist'); }
+    function getAudio()    { return document.getElementById('audio-player'); }
+
+    function getItemTitle(item) {
+        return item ? (item.querySelector('.item-title')?.textContent.trim() || '') : '';
+    }
+    function getItemCover(item) {
+        const img = item ? item.querySelector('.thumbnail img') : null;
+        return img ? (img.getAttribute('src') || '') : '';
+    }
+    function getItemAlbum(item) {
+        const el = item ? item.querySelector('.Album') : null;
+        return el ? el.textContent.trim() : '';
+    }
+    function getItemArtists(item) {
+        const sub = item ? (item.querySelector('.item-subtitle')?.textContent || '') : '';
+        const idx = sub.indexOf('·');
+        const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+        if (!namePart) return [];
+        const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
+        return parts.length ? parts : [namePart];
+    }
+
+    function findAlbumItems(albumName, artistName) {
+        const pl = getPlaylist();
+        if (!pl) return [];
+
+        const nAlbum  = norm(albumName);
+        const nArtist = norm(artistName);
+        if (!nAlbum) return [];
+
+        return Array.from(pl.querySelectorAll('.playlist-item')).filter(it => {
+            if (norm(getItemAlbum(it)) !== nAlbum) return false;
+            if (!nArtist) return true;
+            return getItemArtists(it).some(a => norm(a) === nArtist);
+        });
+    }
+
+    function renderCarousel() {
+        if (!avCarousel) return;
+        clearNode(avCarousel);
+
+        albumItems.forEach(item => {
+            const title  = getItemTitle(item);
+            const cover  = getItemCover(item);
+            const artist = getItemArtists(item)[0] || '';
+
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'av-card';
+            card.setAttribute('aria-label', title);
+
+            const thumb = document.createElement('div');
+            thumb.className = 'av-card-thumb';
+            if (cover) {
+                const img = document.createElement('img');
+                img.src = cover;
+                img.alt = title;
+                img.loading = 'lazy';
+                thumb.appendChild(img);
+            }
+            card.appendChild(thumb);
+
+            const t = document.createElement('span');
+            t.className = 'av-card-title';
+            t.textContent = title;
+            card.appendChild(t);
+
+            if (artist) {
+                const s = document.createElement('span');
+                s.className = 'av-card-sub';
+                s.textContent = artist;
+                card.appendChild(s);
+            }
+
+            card.addEventListener('click', () => playItem(item));
+            avCarousel.appendChild(card);
+        });
+    }
+
+    function renderList() {
+        if (!avList) return;
+        clearNode(avList);
+
+        albumItems.forEach(item => {
+            const title = getItemTitle(item);
+            const cover = getItemCover(item);
+            const sub   = item.querySelector('.item-subtitle')?.textContent.trim() || '';
+
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'av-row';
+            row.setAttribute('aria-label', title);
+
+            if (cover) {
+                const thumb = document.createElement('div');
+                thumb.className = 'thumbnail';
+                const img = document.createElement('img');
+                img.src = cover;
+                img.alt = title;
+                img.loading = 'lazy';
+                thumb.appendChild(img);
+                row.appendChild(thumb);
+            }
+
+            const info = document.createElement('div');
+            info.className = 'item-info';
+
+            const t = document.createElement('span');
+            t.className = 'item-title';
+            t.textContent = title;
+            info.appendChild(t);
+
+            if (sub) {
+                const s = document.createElement('span');
+                s.className = 'item-subtitle';
+                s.textContent = sub;
+                info.appendChild(s);
+            }
+
+            row.appendChild(info);
+            row.addEventListener('click', () => playItem(item));
+            avList.appendChild(row);
+        });
+    }
+
+    function setListMode(on) {
+        listMode = !!on;
+        if (avCarousel) avCarousel.classList.toggle('hidden', listMode);
+        if (avList)     avList.classList.toggle('visible', listMode);
+        if (avToggle)   avToggle.textContent = listMode ? 'Modo de carrusel' : 'Modo de lista';
+        updateAlbumHighlight();
+    }
+
+    function updateAlbumHighlight() {
+        const pl = getPlaylist();
+        const active = pl ? pl.querySelector('.playlist-item.active') : null;
+
+        if (avCarousel) {
+            avCarousel.querySelectorAll('.av-card').forEach((card, i) => {
+                card.classList.toggle('playing', albumItems[i] === active);
+            });
+        }
+        if (avList) {
+            avList.querySelectorAll('.av-row').forEach((row, i) => {
+                row.classList.toggle('active', albumItems[i] === active);
+            });
+        }
+    }
+
+    function playItem(item) {
+        if (!item) return;
+
+        if (albumPlaying) {
+            const idx = albumQueue.indexOf(item);
+            if (idx === -1) {
+                albumPlaying = false;
+            } else {
+                albumIndex = idx;
+            }
+        }
+
+        internalClick = true;
+        try { item.click(); } finally { internalClick = false; }
+    }
+
+    function startAlbumPlayback() {
+        if (!albumItems.length) return;
+        albumQueue   = albumItems.slice();
+        albumPlaying = true;
+        albumIndex   = 0;
+        playItem(albumQueue[0]);
+    }
+
+    function registerCompletedPlay(item) {
+        if (!item || typeof normalizeStr !== 'function') return;
+
+        const title = getItemTitle(item);
+        if (!title) return;
+
+        const key = norm(title);
+        if (!key) return;
+
+        let map = {};
+        try { map = JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); } catch (_) { map = {}; }
+
+        let data = map[key];
+        if (data === true) data = { liked: true, ts: 0, locked: false };
+
+        const alreadyLiked = !!(data && typeof data === 'object' && data.liked !== false);
+
+        if (alreadyLiked) {
+            map[key] = { liked: true, ts: Date.now(), locked: true };
+            try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
+            return;
+        }
+
+        map[key] = { liked: true, ts: Date.now(), locked: true };
+        try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
+
+        if (typeof cambiarReproducciones === 'function') {
+            cambiarReproducciones(item, 1);
+        }
+    }
+
+    function onAlbumEnded(e) {
+        const audio = getAudio();
+        if (!audio || e.target !== audio) return;
+        if (!albumPlaying) return;
+
+        const pl = getPlaylist();
+        const active = pl ? pl.querySelector('.playlist-item.active') : null;
+
+        if (active && albumQueue[albumIndex] && active !== albumQueue[albumIndex]) {
+            albumPlaying = false;
+            return;
+        }
+
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+
+        const finished = albumQueue[albumIndex];
+        registerCompletedPlay(finished);
+
+        albumIndex++;
+
+        if (albumIndex < albumQueue.length) {
+            playItem(albumQueue[albumIndex]);
+        } else {
+            albumPlaying = false;
+            resetAfterAlbum();
+        }
+    }
+
+    function resetAfterAlbum() {
+        const audio = getAudio();
+        if (!audio) return;
+
+        try { audio.pause(); } catch (_) {}
+        try { audio.currentTime = 0; } catch (_) {}
+
+        const pb = document.getElementById('progress-bar');
+        const ct = document.getElementById('current-time');
+        if (pb) {
+            pb.style.setProperty('--progress', '0%');
+            pb.setAttribute('aria-valuenow', '0');
+        }
+        if (ct) ct.textContent = '0:00';
+
+        const icon = document.getElementById('play-icon');
+        if (icon) {
+            icon.innerHTML = '<polygon points="5,3 19,12 5,21" fill="#ffffff" />';
+            icon.style.marginLeft = '3px';
+        }
+        const btn = document.getElementById('play-button');
+        if (btn) btn.setAttribute('aria-label', 'Reproducir');
+
+        try { audio.dispatchEvent(new Event('pause')); } catch (_) {}
+    }
+
+    function openAlbum(albumName, artistName) {
+        const items = findAlbumItems(albumName, artistName);
+        if (!items.length) return;
+
+        albumItems = items;
+
+        if (avTitle) avTitle.textContent = albumName || 'Álbum';
+
+        renderCarousel();
+        renderList();
+        setListMode(false);
+
+        if (albumView) {
+            albumView.classList.add('visible');
+            albumView.setAttribute('aria-hidden', 'false');
+        }
+        if (avScroll) avScroll.scrollTop = 0;
+
+        updateAlbumHighlight();
+    }
+
+    function closeAlbum() {
+        if (!albumView) return;
+        albumView.classList.remove('visible');
+        albumView.setAttribute('aria-hidden', 'true');
+    }
+
+    function onHomeAlbumClick(e) {
+        const carousel = document.getElementById('carousel-albums');
+        if (!carousel) return;
+        if (!e.target || !carousel.contains(e.target)) return;
+
+        const card = e.target.closest ? e.target.closest('.home-card') : null;
+        if (!card) return;
+
+        const titleEl = card.querySelector('.home-card-title');
+        if (!titleEl) return;
+
+        const albumName  = titleEl.textContent.trim();
+        const subEl      = card.querySelector('.home-card-sub');
+        const artistName = subEl ? subEl.textContent.trim() : '';
+
+        e.stopPropagation();
+        e.preventDefault();
+
+        openAlbum(albumName, artistName);
+    }
+
+    function onAnyManualClick(e) {
+        if (internalClick) return;
+        const t = e.target;
+        if (!t || !t.closest) return;
+        if (t.closest('#playlist .playlist-item')) {
+            albumPlaying = false;
+        }
+    }
+
+    function initPlaylistObserver() {
+        const pl = getPlaylist();
+        if (!pl) return;
+
+        const obs = new MutationObserver(() => {
+            if (!albumPlaying) return;
+            const active = pl.querySelector('.playlist-item.active');
+            if (active && albumQueue[albumIndex] && active !== albumQueue[albumIndex]) {
+                albumPlaying = false;
+            }
+        });
+
+        obs.observe(pl, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class']
+        });
+    }
+
+    function boot() {
+        albumView = document.getElementById('album-view');
+        if (!albumView) return;
+
+        avTitle    = document.getElementById('av-title');
+        avToggle   = document.getElementById('av-toggle');
+        avScroll   = document.getElementById('av-scroll');
+        avCarousel = document.getElementById('av-carousel');
+        avList     = document.getElementById('av-list');
+        avPlayAll  = document.getElementById('av-play-all');
+        avBack     = document.getElementById('av-back');
+
+        if (avBack)    avBack.addEventListener('click', closeAlbum);
+        if (avToggle)  avToggle.addEventListener('click', () => setListMode(!listMode));
+        if (avPlayAll) avPlayAll.addEventListener('click', startAlbumPlayback);
+
+        document.addEventListener('click', onHomeAlbumClick, true);
+        document.addEventListener('click', onAnyManualClick, true);
+        window.addEventListener('ended', onAlbumEnded, true);
+
+        const audio = getAudio();
+        if (audio) audio.addEventListener('play', updateAlbumHighlight);
+
+        initPlaylistObserver();
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && albumView.classList.contains('visible')) {
+                closeAlbum();
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+})();
+
+/* ============================================================
+   11. 🆕 BOTÓN "MOSTRAR TODAS LAS CANCIONES"
+   ------------------------------------------------------------
+   · Al cargar la app, la lista "Todas las canciones" aparece
+     OCULTA (estado inicial).
+   · Al pulsar el botón, se muestran TODAS las canciones con el
+     diseño existente (mismos items, mismo orden, misma info).
+   · La búsqueda sigue funcionando: si el usuario escribe, se
+     muestran las coincidencias aunque no haya pulsado el botón.
+   · No modifica reproductor, likes, álbumes, perfiles, etc.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    let showAllSongs = false;
+
+    function getPlaylistItems() {
+        const pl = document.getElementById('playlist');
+        if (!pl) return [];
+        return Array.from(pl.querySelectorAll(':scope > .playlist-item'));
+    }
+
+    function hideAllSongs() {
+        getPlaylistItems().forEach(it => { it.style.display = 'none'; });
+    }
+
+    function revealAllSongs() {
+        getPlaylistItems().forEach(it => { it.style.display = 'flex'; });
+    }
+
+    function init() {
+        const btn         = document.getElementById('show-all-btn');
+        const searchInput = document.getElementById('search-input');
+
+        // Estado inicial: canciones ocultas
+        hideAllSongs();
+
+        if (btn) {
+            btn.addEventListener('click', () => {
+                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+                showAllSongs = true;
+                revealAllSongs();
+                btn.setAttribute('hidden', '');
+            });
+        }
+
+        // Si el usuario busca sin pulsar el botón, se respetan las
+        // coincidencias. Al borrar la búsqueda, se vuelven a ocultar
+        // (salvo que ya haya pulsado "Mostrar todas las canciones").
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                const q = (e.target.value || '').trim();
+                if (!q && !showAllSongs) {
+                    hideAllSongs();
+                }
+            });
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
