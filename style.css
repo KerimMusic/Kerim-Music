@@ -1105,7 +1105,6 @@ button:active {
     overflow: hidden;
 }
 
-/* indicador de canción reproduciéndose en el perfil */
 .ap-card.playing {
     box-shadow:
         0 0 0 2px #ff2a2a,
@@ -1131,7 +1130,6 @@ button:active {
     z-index: 3;
 }
 
-/* Feedback visual del título clicable en pantalla completa */
 #fs-title {
     cursor: pointer;
     pointer-events: auto;
@@ -1206,10 +1204,8 @@ button:active {
 }
 
 /* ============================================================
-   NUEVO: ORGANIZACIÓN POR ÁLBUMES EN EL PERFIL DEL ARTISTA
+   ORGANIZACIÓN POR ÁLBUMES EN EL PERFIL DEL ARTISTA
    ============================================================ */
-
-/* Contenedor de cada álbum (ocupa todo el ancho del grid) */
 .ap-album {
     grid-column: 1 / -1;
     background: rgba(255, 255, 255, 0.035);
@@ -1217,7 +1213,6 @@ button:active {
     overflow: hidden;
 }
 
-/* Cabecera clicable del álbum */
 .ap-album-header {
     display: flex;
     align-items: center;
@@ -1290,7 +1285,6 @@ button:active {
     color: #ff2a2a;
 }
 
-/* Contenedor interno de las canciones del álbum (reutiliza .ap-card) */
 .ap-album-tracks {
     display: none;
     grid-template-columns: repeat(3, 1fr);
@@ -1301,7 +1295,6 @@ button:active {
     display: grid;
 }
 
-/* Encabezado de la sección "TEMAS" (canciones sin álbum) */
 .ap-temas-header {
     grid-column: 1 / -1;
     font-size: 12px;
@@ -1312,7 +1305,6 @@ button:active {
     padding: 10px 4px 2px;
 }
 
-/* Grid de temas independientes (reutiliza .ap-card) */
 .ap-temas-grid {
     grid-column: 1 / -1;
     display: grid;
@@ -1420,7 +1412,6 @@ button:active {
     word-break: break-word;
 }
 
-/* Variante circular para artistas */
 .home-card--artist { width: 118px; text-align: center; }
 .home-card--artist .home-card-thumb {
     width: 118px;
@@ -1433,3 +1424,274 @@ button:active {
     text-align: center;
     -webkit-line-clamp: 1;
 }
+
+/* ============================================================
+   VISTA EXCLUSIVA DEL ÁLBUM
+   ============================================================ */
+.album-view {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 81px;
+    background: #000000;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(110%);
+    visibility: hidden;
+    transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+                visibility 0.42s;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.album-view.visible {
+    transform: translateY(0);
+    visibility: visible;
+}
+
+.av-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 16px 6px;
+}
+
+.av-back {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.av-back:active {
+    transform: scale(0.9);
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.av-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: clamp(28px, 9vw, 40px);
+    font-weight: 900;
+    line-height: 1.05;
+    letter-spacing: -0.6px;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.av-toggle {
+    flex-shrink: 0;
+    background: #ff2a2a;
+    color: #ffffff;
+    border: none;
+    border-radius: 50px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    cursor: pointer;
+    font-family: inherit;
+    box-shadow: 0 6px 18px rgba(255, 42, 42, 0.32);
+    transition: transform 0.15s ease, opacity 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.av-toggle:active { transform: scale(0.94); opacity: 0.9; }
+
+.av-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 14px;
+}
+
+.av-carousel {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 14px 20px 10px;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    touch-action: pan-x;
+}
+.av-carousel::-webkit-scrollbar { display: none; }
+.av-carousel.hidden { display: none; }
+
+.av-card {
+    flex: 0 0 auto;
+    width: 150px;
+    background: none;
+    border: none;
+    padding: 0;
+    color: #ffffff;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    scroll-snap-align: start;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.15s ease;
+}
+.av-card:active { transform: scale(0.96); }
+
+.av-card-thumb {
+    width: 150px;
+    height: 150px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #1a1a1a;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55);
+    position: relative;
+}
+.av-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+}
+
+.av-card-title {
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #ffffff;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.av-card-sub {
+    margin-top: 2px;
+    font-size: 11px;
+    color: #b3b3b3;
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.av-card.playing .av-card-thumb {
+    box-shadow: 0 0 0 2px #ff2a2a, 0 6px 18px rgba(255, 42, 42, 0.45);
+}
+.av-card.playing .av-card-title { color: #ff2a2a; }
+
+.av-list { display: none; padding: 6px 20px 8px; }
+.av-list.visible { display: block; }
+
+.av-row {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    width: 100%;
+    margin-bottom: 20px;
+    padding: 5px 0;
+    background: none;
+    border: none;
+    border-radius: 10px;
+    color: #ffffff;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.2s ease;
+}
+.av-row:active { background-color: #1f1f1f; }
+.av-row.active { background-color: #1f1f1f; }
+.av-row.active .item-title { color: #ff2a2a; }
+
+.av-footer {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+    padding: 10px 20px 18px;
+    border-top: 1px solid #141414;
+    background: #000000;
+}
+
+.av-play-all {
+    width: 100%;
+    max-width: 420px;
+    background: #ff2a2a;
+    color: #ffffff;
+    border: none;
+    border-radius: 50px;
+    padding: 16px 24px;
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 10px 26px rgba(255, 42, 42, 0.35);
+    transition: transform 0.15s ease, opacity 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.av-play-all:active { transform: scale(0.96); opacity: 0.9; }
+
+/* ============================================================
+   🆕 BOTÓN "MOSTRAR TODAS LAS CANCIONES"
+   ============================================================ */
+.home-all-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 20px 6px;
+    border-top: 1px solid #141414;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.home-all-header .home-section-title--all {
+    padding: 0;
+    margin: 0;
+    border-top: none;
+}
+
+.show-all-btn {
+    background: #ff2a2a;
+    color: #ffffff;
+    border: none;
+    border-radius: 50px;
+    padding: 14px 22px;
+    font-size: 15px;
+    font-weight: 800;
+    font-family: inherit;
+    letter-spacing: 0.2px;
+    line-height: 1.15;
+    text-align: center;
+    cursor: pointer;
+    max-width: 200px;
+    white-space: normal;
+    box-shadow: 0 10px 26px rgba(255, 42, 42, 0.35);
+    transition: transform 0.15s ease, opacity 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+.show-all-btn:active {
+    transform: scale(0.95);
+    opacity: 0.9;
+}
+
+.show-all-btn[hidden] { display: none; }
