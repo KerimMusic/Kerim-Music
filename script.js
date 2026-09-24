@@ -950,6 +950,17 @@ document.addEventListener('DOMContentLoaded', () => {
         pintarTodasLasReproducciones();
     })();
 
+    // 🔥 EXPONER FUNCIONES PARA KODULAR
+    window.kodularPlayPause = function() {
+        if (playButton) playButton.click();
+    };
+    window.kodularNext = function() {
+        goNextItem();
+    };
+    window.kodularPrev = function() {
+        goPrevItem();
+    };
+
 });
 
 /* ============================================================
