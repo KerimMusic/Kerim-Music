@@ -234,6 +234,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const player         = document.getElementById('player');
     const playlist       = document.getElementById('playlist');
 
+    // 🔥 SILENCIAR EL AUDIO HTML SI ESTAMOS EN KODULAR
+    // Esto evita que se escuche doble (el HTML y el Player nativo al mismo tiempo)
+    if (typeof window.Kodular !== 'undefined') {
+        audioPlayer.volume = 0;
+    }
+
     let currentItem = null;
     let isSkipping  = false;
 
@@ -363,6 +369,11 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress(0);
         currentTimeEl.textContent = '0:00';
         durationEl.textContent = '0:00';
+
+        // 🔥 ENVIAR URL DE LA CANCIÓN A KODULAR
+        if (typeof window.Kodular !== 'undefined' && window.Kodular.setWebViewString) {
+            window.Kodular.setWebViewString("PLAY_URL:" + src);
+        }
 
         if (autoplay) {
             audioPlayer.play().catch(err => {
@@ -2708,7 +2719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         var audio = document.getElementById('audio-player');
         if (!audio) return;
 
-        // Enviar un mensaje de prueba al cargar (opcional, pero útil)
+        // Enviar un mensaje de prueba al cargar
         if (typeof window.Kodular !== 'undefined' && window.Kodular.setWebViewString) {
             try { window.Kodular.setWebViewString("PAUSE"); } catch (_) {}
         }
