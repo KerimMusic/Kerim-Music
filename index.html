@@ -62,9 +62,6 @@
 
         <div class="playlist" id="playlist">
 
-            <!-- ============================================================
-                 PORTADA / CATEGORÍAS
-                 ============================================================ -->
             <div class="home-view" id="home-view">
 
                 <section class="home-section" id="sec-artists">
@@ -92,11 +89,13 @@
                     <div class="home-carousel" id="carousel-albums"></div>
                 </section>
 
-                <h2 class="home-section-title home-section-title--all">Todas las canciones</h2>
+                <div class="home-all-header">
+                    <h2 class="home-section-title home-section-title--all">Todas las canciones</h2>
+                    <button class="show-all-btn" id="show-all-btn" type="button">
+                        Mostrar todas las canciones
+                    </button>
+                </div>
             </div>
-            <!-- ============================================================
-                 FIN PORTADA / CATEGORÍAS
-                 ============================================================ -->
 
             <!-- ==================== Barrio Bajo ==================== -->
             <div class="playlist-item"
@@ -701,9 +700,6 @@
             </button>
         </div>
 
-        <!-- ============================================================
-             PERFIL DEL ARTISTA
-             ============================================================ -->
         <div class="artist-profile" id="artist-profile" aria-hidden="true">
             <div class="ap-header">
                 <span class="ap-header-title">PERFIL DE ARTISTA</span>
@@ -735,11 +731,38 @@
             </div>
         </div>
 
+        <div class="album-view" id="album-view" aria-hidden="true">
+
+            <div class="av-header">
+                <button class="av-back" id="av-back" type="button" aria-label="Volver">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                         stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"
+                         stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                </button>
+
+                <h1 class="av-title" id="av-title">Álbum</h1>
+
+                <button class="av-toggle" id="av-toggle" type="button">Modo de lista</button>
+            </div>
+
+            <div class="av-scroll" id="av-scroll">
+                <div class="av-carousel" id="av-carousel"></div>
+                <div class="av-list" id="av-list"></div>
+            </div>
+
+            <div class="av-footer">
+                <button class="av-play-all" id="av-play-all" type="button">
+                    Escuchar todo el álbum
+                </button>
+            </div>
+        </div>
+
     </div>
 
     <audio id="audio-player" preload="metadata"></audio>
 
-    <!-- 🔥 SDK de Firebase (compat) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
