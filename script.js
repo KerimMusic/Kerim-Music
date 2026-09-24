@@ -435,13 +435,24 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress(0);
         currentTimeEl.textContent = '0:00';
 
+        /* ============================================================
+           ✨ CAMBIO 1: RENOVACIÓN DEL PERÍODO DE 30 DÍAS
+           - Primera escucha completa → +1 reproducción + Me gusta.
+           - Escucha repetida        → se mantiene todo y se renueva
+             la fecha (ts) para que el período de 30 días vuelva a
+             empezar desde AHORA.
+           ============================================================ */
         if (completed && currentItem) {
             const key = getItemKey(currentItem);
             if (key) {
                 const data = getLikeData(key);
                 const alreadyLiked = !!(data && data.liked !== false);
 
-                if (!alreadyLiked) {
+                if (alreadyLiked) {
+                    // 🔄 Ya tenía Me gusta → renovar período sin sumar.
+                    setLikeData(key, { liked: true, ts: Date.now(), locked: true });
+                } else {
+                    // 🆕 Primera vez → +1 reproducción y Me gusta.
                     setLikeData(key, { liked: true, ts: Date.now(), locked: true });
                     updateLikeUI();
                     await cambiarReproducciones(currentItem, 1);
@@ -1527,7 +1538,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data === true) data = { liked: true, ts: 0, locked: false };
 
         const alreadyLiked = !!(data && typeof data === 'object' && data.liked !== false);
-        if (alreadyLiked) return;
+
+        /* ============================================================
+           ✨ CAMBIO 2: RENOVACIÓN DEL PERÍODO DE 30 DÍAS
+           - Si ya tenía Me gusta → se RENUEVA la fecha (ts) y NO se
+             suma otra reproducción.
+           - Si es la primera vez → se crea el registro + Me gusta y
+             sí se suma la reproducción.
+           ============================================================ */
+        if (alreadyLiked) {
+            // 🔄 Renueva el período sin sumar reproducción.
+            map[key] = { liked: true, ts: Date.now(), locked: true };
+            try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
+            return;
+        }
 
         map[key] = { liked: true, ts: Date.now(), locked: true };
         try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
@@ -2199,6 +2223,122 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tries >= 40) return;
             setTimeout(loop, 200);
         })();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+})();
+
+/* ============================================================
+   9. EXPIRACIÓN AUTOMÁTICA DEL ME GUSTA (30 DÍAS)  ✨ NUEVO
+   ------------------------------------------------------------
+   - Si pasan 30 días sin una nueva escucha completa válida:
+       · Se elimina el Me gusta.
+       · Se elimina la reproducción asociada (-1 en Firebase).
+       · El usuario puede volver a generar el Me gusta.
+   - Si el usuario vuelve a escuchar antes, el período se
+     renueva (ya manejado en las secciones 3 y 6).
+   - Se ejecuta automáticamente al abrir la app y cada 5 min.
+   - No toca el reproductor, ni Repetir/Aleatorio, ni álbumes,
+     ni perfiles, ni anuncios.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const LIKES_KEY    = 'omega_likes_v1';
+    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000; // 30 días
+
+    function _read() {
+        try { return JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); }
+        catch (_) { return {}; }
+    }
+    function _write(map) {
+        try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
+    }
+
+    function _norm(str) {
+        if (typeof normalizeStr === 'function') return normalizeStr(str);
+        return String(str || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function _findItemByKey(key, playlist) {
+        if (!playlist || !key) return null;
+        const items = playlist.querySelectorAll('.playlist-item');
+        for (const it of items) {
+            const title = it.querySelector('.item-title')?.textContent.trim() || '';
+            if (_norm(title) === key) return it;
+        }
+        return null;
+    }
+
+    async function limpiarMeGustasExpirados() {
+        const map     = _read();
+        const ahora   = Date.now();
+        const claves  = Object.keys(map);
+        if (!claves.length) return;
+
+        const playlist  = document.getElementById('playlist');
+        const expirados = [];
+
+        claves.forEach(key => {
+            const data = map[key];
+            // Solo procesamos entradas en formato objeto con lock activo.
+            if (!data || typeof data !== 'object') return;
+            if (data.liked === false) return;
+            if (!data.locked) return;
+
+            const ts = data.ts || 0;
+            if (ts > 0 && (ahora - ts) >= LIKE_LOCK_MS) {
+                expirados.push(key);
+            }
+        });
+
+        if (!expirados.length) return;
+
+        for (const key of expirados) {
+            // 1) Quitar el Me gusta del almacenamiento local
+            delete map[key];
+
+            // 2) Quitar la reproducción asociada (-1 en Firebase)
+            const item = _findItemByKey(key, playlist);
+            if (item && typeof cambiarReproducciones === 'function') {
+                try { await cambiarReproducciones(item, -1); }
+                catch (e) { console.warn('No se pudo revertir reproducción:', e); }
+            }
+        }
+
+        // 3) Persistir el mapa ya limpio
+        _write(map);
+
+        // 4) Si la canción activa expiró, apagar el botón Me gusta
+        try {
+            const fsLikeBtn  = document.getElementById('fs-like');
+            const activeItem = playlist ? playlist.querySelector('.playlist-item.active') : null;
+            if (fsLikeBtn && activeItem) {
+                const activeKey = _norm(
+                    activeItem.querySelector('.item-title')?.textContent.trim() || ''
+                );
+                if (expirados.includes(activeKey)) {
+                    fsLikeBtn.classList.remove('active');
+                }
+            }
+        } catch (_) {}
+
+        console.log(`⏳ Me gusta expirados automáticamente: ${expirados.length}`);
+    }
+
+    function boot() {
+        // Pequeño retraso para asegurar que Firebase ya cargó los docs
+        setTimeout(limpiarMeGustasExpirados, 2000);
+        // Revisión periódica cada 5 minutos
+        setInterval(limpiarMeGustasExpirados, 5 * 60 * 1000);
     }
 
     if (document.readyState === 'loading') {
