@@ -2717,7 +2717,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         audio.addEventListener('play', function () {
             try { 
-                window.Kodular.setWebViewString("PLAY"); 
+                window.Kodular.setWebViewString("PRUEBA_DE_CONEXION"); 
             } catch (_) {}
         });
         audio.addEventListener('pause', function () {
