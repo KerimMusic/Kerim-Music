@@ -4,9 +4,10 @@
 (function () {
     'use strict';
 
-    const hasAppInventor =
-        typeof window.AppInventor !== 'undefined' &&
-        typeof window.AppInventor.setWebViewString === 'function';
+    // 🔴 CORRECCIÓN: Kodular usa window.Kodular, NO window.AppInventor
+    const hasKodular =
+        typeof window.Kodular !== 'undefined' &&
+        typeof window.Kodular.setWebViewString === 'function';
 
     const listeners = Object.create(null);
 
@@ -19,9 +20,9 @@
     }
 
     function send(obj) {
-        if (!hasAppInventor) return false;
+        if (!hasKodular) return false;
         try {
-            window.AppInventor.setWebViewString(JSON.stringify(obj));
+            window.Kodular.setWebViewString(JSON.stringify(obj));
             return true;
         } catch (e) {
             console.warn('[Bridge] send error:', e);
@@ -38,7 +39,7 @@
     }
 
     const Bridge = {
-        isKodular: hasAppInventor,
+        isKodular: hasKodular,
 
         /* ---------- JS -> Kodular ---------- */
         play: function (url, meta) {
@@ -76,6 +77,7 @@
     };
 
     window.KodularBridge = Bridge;
+    console.log('[Bridge] Kodular detectado:', hasKodular);
 })();
 
 /* ============================================================
