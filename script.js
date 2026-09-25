@@ -2770,3 +2770,44 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+
+// Puente con la app Android
+function notificarAndroidPlay() {
+    if (window.AndroidBridge) window.AndroidBridge.onPlay();
+}
+function notificarAndroidPause() {
+    if (window.AndroidBridge) window.AndroidBridge.onPause();
+}
+function notificarAndroidTrack(titulo, artista) {
+    if (window.AndroidBridge) window.AndroidBridge.onTrackChange(titulo, artista);
+}
+
+// Detectar play/pausa del reproductor
+const audioPlayer = document.getElementById('audio-player');
+
+audioPlayer.addEventListener('play', function() {
+    notificarAndroidPlay();
+});
+
+audioPlayer.addEventListener('pause', function() {
+    notificarAndroidPause();
+});
+
+// Detectar cambio de canción (ajusta según tu código)
+audioPlayer.addEventListener('loadedmetadata', function() {
+    // Aquí puedes poner el nombre real de la canción que está sonando
+    const tituloActual = "Kerim Music"; // o el nombre dinámico
+    const artistaActual = "Reproduciendo";
+    notificarAndroidTrack(tituloActual, artistaActual);
+});
+
+// Funciones para los botones de la notificación (siguiente/anterior)
+window.nextTrack = function() {
+    // Pon aquí la lógica de tu botón "siguiente"
+    // Ejemplo: document.querySelector('.btn-next').click();
+};
+
+window.prevTrack = function() {
+    // Pon aquí la lógica de tu botón "anterior"
+    // Ejemplo: document.querySelector('.btn-prev').click();
+};
