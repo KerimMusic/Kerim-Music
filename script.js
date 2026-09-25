@@ -1,7 +1,86 @@
 /* ============================================================
+   0. 🔌 PUENTE KODULAR ↔ WEBVIEW (AUDIO EN SEGUNDO PLANO)
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const hasAppInventor =
+        typeof window.AppInventor !== 'undefined' &&
+        typeof window.AppInventor.setWebViewString === 'function';
+
+    const listeners = Object.create(null);
+
+    function emit(evt, payload) {
+        const arr = listeners[evt];
+        if (!arr) return;
+        arr.slice().forEach(function (fn) {
+            try { fn(payload); } catch (e) { console.warn('[Bridge]', e); }
+        });
+    }
+
+    function send(obj) {
+        if (!hasAppInventor) return false;
+        try {
+            window.AppInventor.setWebViewString(JSON.stringify(obj));
+            return true;
+        } catch (e) {
+            console.warn('[Bridge] send error:', e);
+            return false;
+        }
+    }
+
+    function safeParse(payload) {
+        if (payload == null) return null;
+        if (typeof payload === 'string') {
+            try { return JSON.parse(payload); } catch (_) { return null; }
+        }
+        return payload;
+    }
+
+    const Bridge = {
+        isKodular: hasAppInventor,
+
+        /* ---------- JS -> Kodular ---------- */
+        play: function (url, meta) {
+            return send({
+                cmd: 'play',
+                url: url || '',
+                title:  (meta && meta.title)  || '',
+                artist: (meta && meta.artist) || '',
+                cover:  (meta && meta.cover)  || ''
+            });
+        },
+        resume: function ()  { return send({ cmd: 'resume' }); },
+        pause:  function ()  { return send({ cmd: 'pause'  }); },
+        stop:   function ()  { return send({ cmd: 'stop'   }); },
+        seek:   function (t) { return send({ cmd: 'seek', time: Number(t) || 0 }); },
+
+        /* ---------- Kodular -> JS ---------- */
+        receiveState: function (payload) {
+            const p = safeParse(payload);
+            if (!p || !p.type) return;
+            emit(p.type, p);            // "state" | "ended" | "error"
+        },
+
+        receiveCommand: function (payload) {
+            const p = safeParse(payload);
+            if (!p || !p.cmd) return;
+            emit('command', p);          // "next" | "prev" | "play" | "pause" |
+                                         // "stop" | "toggle" | "select" | "seek"
+        },
+
+        on: function (evt, fn) {
+            if (typeof fn !== 'function') return;
+            (listeners[evt] = listeners[evt] || []).push(fn);
+        }
+    };
+
+    window.KodularBridge = Bridge;
+})();
+
+/* ============================================================
    1. CONFIGURACIÓN DE FIREBASE
    ============================================================ */
-// ⚠️ REEMPLAZA ESTO CON TUS CREDENCIALES REALES DE FIREBASE
 const firebaseConfig = {
     apiKey: "TU_API_KEY",
     authDomain: "kerim-music-a9c46.firebaseapp.com",
@@ -14,10 +93,8 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-/* Cache de documentos de Firebase */
 let firebaseDocsCache = [];
 
-/* Normalizar string (quita tildes, espacios, mayúsculas) */
 function normalizeStr(str) {
     return String(str || '')
         .toLowerCase()
@@ -26,7 +103,6 @@ function normalizeStr(str) {
         .replace(/[^a-z0-9]/g, '');
 }
 
-/* Buscar el documento de Firebase que corresponde a un título del HTML */
 function findFirebaseDoc(songTitle) {
     if (!songTitle || firebaseDocsCache.length === 0) return null;
     const nTitle = normalizeStr(songTitle);
@@ -48,7 +124,6 @@ function findFirebaseDoc(songTitle) {
     return null;
 }
 
-/* Cargar todos los docs de Firebase */
 async function cargarDocsDeFirebase() {
     try {
         const snap = await db.collection('Radio_Muisc').get();
@@ -63,7 +138,6 @@ async function cargarDocsDeFirebase() {
     }
 }
 
-/* Mostrar contador de reproducciones en un item */
 function pintarReproducciones(item, count) {
     if (!item) return;
     const info = item.querySelector('.item-info');
@@ -78,7 +152,6 @@ function pintarReproducciones(item, count) {
     badge.textContent = `▶ ${count}`;
 }
 
-/* Pintar todos los contadores según Firebase */
 function pintarTodasLasReproducciones() {
     document.querySelectorAll('.playlist-item').forEach(item => {
         const title = item.querySelector('.item-title')?.textContent.trim() || '';
@@ -89,7 +162,6 @@ function pintarTodasLasReproducciones() {
     });
 }
 
-/* Cambiar reproducciones en Firebase (delta = +1 o -1) */
 async function cambiarReproducciones(item, delta) {
     if (!item || !delta) return;
     const title = item.querySelector('.item-title')?.textContent.trim() || '';
@@ -163,6 +235,92 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentItem = null;
     let isSkipping  = false;
+
+    /* ---------- 🔌 MODO KODULAR: estado espejo ---------- */
+    const useKodular = !!(window.KodularBridge && window.KodularBridge.isKodular);
+
+    const bridgeState = {
+        playing:     false,
+        currentTime: 0,
+        duration:    0,
+        loaded:      false,
+        url:         ''
+    };
+
+    if (useKodular && audioPlayer) {
+        Object.defineProperty(audioPlayer, 'duration', {
+            get() { return bridgeState.duration; },
+            configurable: true
+        });
+        Object.defineProperty(audioPlayer, 'currentTime', {
+            get() { return bridgeState.currentTime; },
+            set(v) {
+                bridgeState.currentTime = Number(v) || 0;
+                window.KodularBridge.seek(bridgeState.currentTime);
+            },
+            configurable: true
+        });
+        Object.defineProperty(audioPlayer, 'paused', {
+            get() { return !bridgeState.playing; },
+            configurable: true
+        });
+
+        audioPlayer.play = function () {
+            const url = audioPlayer.src || '';
+            if (!url) return Promise.resolve();
+
+            const meta = {
+                title:  currentItem ? getItemTitle(currentItem) : '',
+                artist: currentItem
+                    ? (currentItem.querySelector('.item-subtitle')?.textContent.trim() || '')
+                    : '',
+                cover:  currentItem ? getItemCover(currentItem) : ''
+            };
+            window.KodularBridge.play(url, meta);
+            return Promise.resolve();
+        };
+
+        audioPlayer.pause = function () {
+            window.KodularBridge.pause();
+        };
+
+        window.KodularBridge.on('state', function (s) {
+            const wasPlaying = bridgeState.playing;
+
+            bridgeState.playing     = !!s.playing;
+            bridgeState.currentTime = Number(s.currentTime) || 0;
+            bridgeState.duration    = Number(s.duration)    || 0;
+            bridgeState.loaded      = true;
+
+            durationEl.textContent    = formatTime(bridgeState.duration);
+            currentTimeEl.textContent = formatTime(bridgeState.currentTime);
+
+            if (bridgeState.duration > 0) {
+                updateProgress((bridgeState.currentTime / bridgeState.duration) * 100);
+            }
+
+            updateIcon(bridgeState.playing);
+
+            if (bridgeState.playing && !wasPlaying) {
+                audioPlayer.dispatchEvent(new Event('play'));
+            } else if (!bridgeState.playing && wasPlaying) {
+                audioPlayer.dispatchEvent(new Event('pause'));
+            }
+        });
+
+        window.KodularBridge.on('ended', function () {
+            bridgeState.playing     = false;
+            bridgeState.currentTime = 0;
+            updateIcon(false);
+            updateProgress(0);
+            currentTimeEl.textContent = '0:00';
+            audioPlayer.dispatchEvent(new Event('ended'));
+        });
+
+        window.KodularBridge.on('error', function () {
+            handleLoadError(currentItem);
+        });
+    }
 
     const ICON_PLAY  = '<polygon points="5,3 19,12 5,21" fill="#ffffff" />';
     const ICON_PAUSE = '<rect x="6" y="4" width="4" height="16" fill="#ffffff" />' +
@@ -264,15 +422,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return all;
     }
 
-    function shufflePlaylist() {
-        const items = getAllItems();
-        for (let i = items.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [items[i], items[j]] = [items[j], items[i]];
-        }
-        items.forEach(item => playlist.appendChild(item));
-    }
-
     function loadItem(item, autoplay = true) {
         if (!item) return;
 
@@ -295,10 +444,19 @@ document.addEventListener('DOMContentLoaded', () => {
         player.classList.add('active');
 
         audioPlayer.src = src;
-        audioPlayer.currentTime = 0;
+        bridgeState.url = src;
+
         updateProgress(0);
         currentTimeEl.textContent = '0:00';
         durationEl.textContent = '0:00';
+
+        if (useKodular) {
+            bridgeState.playing     = false;
+            bridgeState.currentTime = 0;
+            bridgeState.duration    = 0;
+        } else {
+            audioPlayer.currentTime = 0;
+        }
 
         if (autoplay) {
             audioPlayer.play().catch(err => {
@@ -324,9 +482,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 300);
     }
 
-    audioPlayer.addEventListener('error', () => {
-        handleLoadError(currentItem);
-    });
+    if (!useKodular) {
+        audioPlayer.addEventListener('error', () => handleLoadError(currentItem));
+    }
 
     function playRandomItem() {
         const items = getCandidateItems();
@@ -399,6 +557,20 @@ document.addEventListener('DOMContentLoaded', () => {
             playRandomItem();
             return;
         }
+
+        if (useKodular) {
+            if (bridgeState.playing) {
+                window.KodularBridge.pause();
+            } else {
+                if (bridgeState.url && bridgeState.url === audioPlayer.src) {
+                    window.KodularBridge.resume();
+                } else {
+                    audioPlayer.play().catch(() => {});
+                }
+            }
+            return;
+        }
+
         if (audioPlayer.paused) {
             audioPlayer.play().catch(err => console.error('Error al reproducir:', err));
         } else {
@@ -406,19 +578,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    audioPlayer.addEventListener('play',  () => updateIcon(true));
-    audioPlayer.addEventListener('pause', () => updateIcon(false));
+    if (!useKodular) {
+        audioPlayer.addEventListener('play',  () => updateIcon(true));
+        audioPlayer.addEventListener('pause', () => updateIcon(false));
 
-    audioPlayer.addEventListener('loadedmetadata', () => {
-        durationEl.textContent = formatTime(audioPlayer.duration);
-    });
+        audioPlayer.addEventListener('loadedmetadata', () => {
+            durationEl.textContent = formatTime(audioPlayer.duration);
+        });
 
-    audioPlayer.addEventListener('timeupdate', () => {
-        currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
-        if (audioPlayer.duration > 0) {
-            updateProgress((audioPlayer.currentTime / audioPlayer.duration) * 100);
-        }
-    });
+        audioPlayer.addEventListener('timeupdate', () => {
+            currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+            if (audioPlayer.duration > 0) {
+                updateProgress((audioPlayer.currentTime / audioPlayer.duration) * 100);
+            }
+        });
+    }
 
     audioPlayer.addEventListener('ended', async () => {
         const duration  = audioPlayer.duration;
@@ -449,10 +623,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     progressBar.addEventListener('click', (e) => {
-        if (!audioPlayer.duration) return;
+        const dur = useKodular ? bridgeState.duration : audioPlayer.duration;
+        if (!dur) return;
         const rect  = progressBar.getBoundingClientRect();
         const ratio = (e.clientX - rect.left) / rect.width;
-        audioPlayer.currentTime = Math.min(1, Math.max(0, ratio)) * audioPlayer.duration;
+        const t     = Math.min(1, Math.max(0, ratio)) * dur;
+
+        if (useKodular) {
+            bridgeState.currentTime = t;
+            window.KodularBridge.seek(t);
+            currentTimeEl.textContent = formatTime(t);
+            updateProgress((t / dur) * 100);
+        } else {
+            audioPlayer.currentTime = t;
+        }
     });
 
     playlist.addEventListener('click', (e) => {
@@ -580,6 +764,70 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeSubmenu();
     });
+
+    /* ============================================================
+       📲 COMANDOS ENTRANTES DESDE KODULAR
+       ============================================================ */
+    if (useKodular) {
+        window.KodularBridge.on('command', function (p) {
+            switch (p.cmd) {
+                case 'next':
+                    goNextItem();
+                    break;
+                case 'prev':
+                    goPrevItem();
+                    break;
+                case 'play':
+                    if (!currentItem) {
+                        playRandomItem();
+                    } else if (bridgeState.url && bridgeState.url === audioPlayer.src) {
+                        window.KodularBridge.resume();
+                    } else {
+                        audioPlayer.play().catch(function () {});
+                    }
+                    break;
+                case 'pause':
+                    window.KodularBridge.pause();
+                    break;
+                case 'toggle':
+                    if (bridgeState.playing) {
+                        window.KodularBridge.pause();
+                    } else if (bridgeState.url && bridgeState.url === audioPlayer.src) {
+                        window.KodularBridge.resume();
+                    } else if (currentItem) {
+                        audioPlayer.play().catch(function () {});
+                    } else {
+                        playRandomItem();
+                    }
+                    break;
+                case 'stop':
+                    window.KodularBridge.stop();
+                    bridgeState.playing = false;
+                    updateIcon(false);
+                    updateProgress(0);
+                    currentTimeEl.textContent = '0:00';
+                    break;
+                case 'seek':
+                    if (p.time != null) {
+                        bridgeState.currentTime = Number(p.time) || 0;
+                        window.KodularBridge.seek(bridgeState.currentTime);
+                        currentTimeEl.textContent = formatTime(bridgeState.currentTime);
+                        if (bridgeState.duration > 0) {
+                            updateProgress((bridgeState.currentTime / bridgeState.duration) * 100);
+                        }
+                    }
+                    break;
+                case 'select':
+                    if (p.title) {
+                        const target = getAllItems().find(function (it) {
+                            return getItemTitle(it).toLowerCase() === String(p.title).toLowerCase();
+                        });
+                        if (target) loadItem(target, true);
+                    }
+                    break;
+            }
+        });
+    }
 
     /* ============================================================
        FULLSCREEN PLAYER
@@ -761,8 +1009,9 @@ document.addEventListener('DOMContentLoaded', () => {
     syncObserver.observe(playerTitle, { childList: true, characterData: true, subtree: true });
 
     function updateVinylState() {
-        if (audioPlayer.paused) fsVinyl.classList.remove('playing');
-        else                    fsVinyl.classList.add('playing');
+        const playing = useKodular ? bridgeState.playing : !audioPlayer.paused;
+        if (playing) fsVinyl.classList.add('playing');
+        else         fsVinyl.classList.remove('playing');
     }
     audioPlayer.addEventListener('play',  updateVinylState);
     audioPlayer.addEventListener('pause', updateVinylState);
@@ -1537,7 +1786,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function detenerAlFinal(audio) {
         try { audio.pause(); } catch (_) {}
-        try { audio.currentTime = 0; } catch (_) {}
 
         const progressBarEl = document.getElementById('progress-bar');
         const currentTimeEl = document.getElementById('current-time');
@@ -1561,7 +1809,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const activeItem = document.querySelector('.playlist-item.active');
             if (activeItem) registrarReproduccionCompletada(activeItem);
 
-            try { audio.currentTime = 0; } catch (_) {}
             const p = audio.play();
             if (p && p.catch) p.catch(() => {});
             return;
@@ -2569,7 +2816,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!audio) return;
 
         try { audio.pause(); } catch (_) {}
-        try { audio.currentTime = 0; } catch (_) {}
 
         const pb = document.getElementById('progress-bar');
         const ct = document.getElementById('current-time');
@@ -2706,15 +2952,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   11. 🆕 BOTÓN "MOSTRAR TODAS LAS CANCIONES"
-   ------------------------------------------------------------
-   · Al cargar la app, la lista "Todas las canciones" aparece
-     OCULTA (estado inicial).
-   · Al pulsar el botón, se muestran TODAS las canciones con el
-     diseño existente (mismos items, mismo orden, misma info).
-   · La búsqueda sigue funcionando: si el usuario escribe, se
-     muestran las coincidencias aunque no haya pulsado el botón.
-   · No modifica reproductor, likes, álbumes, perfiles, etc.
+   11. BOTÓN "MOSTRAR TODAS LAS CANCIONES"
    ============================================================ */
 (function () {
     'use strict';
@@ -2739,7 +2977,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn         = document.getElementById('show-all-btn');
         const searchInput = document.getElementById('search-input');
 
-        // Estado inicial: canciones ocultas
         hideAllSongs();
 
         if (btn) {
@@ -2751,9 +2988,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // Si el usuario busca sin pulsar el botón, se respetan las
-        // coincidencias. Al borrar la búsqueda, se vuelven a ocultar
-        // (salvo que ya haya pulsado "Mostrar todas las canciones").
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
                 const q = (e.target.value || '').trim();
