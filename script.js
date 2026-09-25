@@ -2135,15 +2135,16 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   12. PUENTE CON LA APP ANDROID (VERSIÓN FINAL)
+   12. PUENTE CON LA APP ANDROID (VERSIÓN FINAL CON PORTADA)
    ============================================================ */
 (function () {
     'use strict';
 
-    function safeBridge(method, ...args) {
+    function safeBridge(method) {
         try {
+            var args = Array.prototype.slice.call(arguments, 1);
             if (window.AndroidBridge && typeof window.AndroidBridge[method] === 'function') {
-                window.AndroidBridge[method](...args);
+                window.AndroidBridge[method].apply(window.AndroidBridge, args);
             }
         } catch (e) {
             console.warn('AndroidBridge error:', e);
@@ -2152,63 +2153,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function notificarAndroidPlay()  { safeBridge('onPlay'); }
     function notificarAndroidPause() { safeBridge('onPause'); }
-    function notificarAndroidTrack(titulo, artista) {
-        safeBridge('onTrackChange', titulo, artista);
+
+    function notificarAndroidTrack() {
+        var title = (document.getElementById('player-title')?.textContent || '').trim() || 'Kerim Music';
+        var activeItem = document.querySelector('.playlist-item.active');
+        var artist = 'Reproduciendo';
+        var cover = '';
+
+        if (activeItem) {
+            var sub = activeItem.querySelector('.item-subtitle')?.textContent || '';
+            var idx = sub.indexOf('·');
+            artist = (idx === -1 ? sub : sub.slice(0, idx)).trim() || 'Reproduciendo';
+            cover = activeItem.querySelector('.thumbnail img')?.src || '';
+        }
+
+        safeBridge('onTrackChangeWithCover', title, artist, cover);
     }
 
-    // Exponer en window por si se necesita externamente
     window.notificarAndroidPlay  = notificarAndroidPlay;
     window.notificarAndroidPause = notificarAndroidPause;
     window.notificarAndroidTrack = notificarAndroidTrack;
 
-    function getActiveTitle() {
-        const t = (document.getElementById('player-title')?.textContent || '').trim();
-        return t || 'Kerim Music';
-    }
-
-    function getActiveArtist() {
-        const activeItem = document.querySelector('.playlist-item.active');
-        if (!activeItem) return 'Reproduciendo';
-        const sub = activeItem.querySelector('.item-subtitle')?.textContent || '';
-        const idx = sub.indexOf('·');
-        const name = (idx === -1 ? sub : sub.slice(0, idx)).trim();
-        return name || 'Reproduciendo';
-    }
-
     function init() {
-        const audioPlayer = document.getElementById('audio-player');
+        var audioPlayer = document.getElementById('audio-player');
         if (!audioPlayer) return;
 
-        // Cuando empieza a sonar
         audioPlayer.addEventListener('play', function () {
             notificarAndroidPlay();
-            setTimeout(function () {
-                notificarAndroidTrack(getActiveTitle(), getActiveArtist());
-            }, 100);
+            setTimeout(notificarAndroidTrack, 150);
         });
 
-        // Cuando se pausa
-        audioPlayer.addEventListener('pause', function () {
-            notificarAndroidPause();
-        });
+        audioPlayer.addEventListener('pause', notificarAndroidPause);
 
-        // Cuando cambia de canción (metadata cargada)
         audioPlayer.addEventListener('loadedmetadata', function () {
-            setTimeout(function () {
-                notificarAndroidTrack(getActiveTitle(), getActiveArtist());
-            }, 50);
+            setTimeout(notificarAndroidTrack, 100);
         });
-
-        // Cuando cambia el título visible (por si acaso)
-        const playerTitle = document.getElementById('player-title');
-        if (playerTitle) {
-            const titleObserver = new MutationObserver(function () {
-                setTimeout(function () {
-                    notificarAndroidTrack(getActiveTitle(), getActiveArtist());
-                }, 50);
-            });
-            titleObserver.observe(playerTitle, { childList: true, characterData: true, subtree: true });
-        }
     }
 
     if (document.readyState === 'loading') {
@@ -2217,15 +2196,10 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 
-    // Funciones que Android llamará desde los botones de la notificación
     window.nextTrack = function () {
         document.dispatchEvent(new CustomEvent('omega:next'));
     };
     window.prevTrack = function () {
         document.dispatchEvent(new CustomEvent('omega:prev'));
     };
-
-    // Función que Android usará para saber si la web está lista
-    window.__omegaWebReady = true;
-    console.log('✅ Puente Android listo');
 })();
