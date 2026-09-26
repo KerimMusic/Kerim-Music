@@ -1,5 +1,5 @@
 /* ============================================================
-   1. CONFIGURACIÓN DE FIREBASE
+   0. AUTENTICACIÓN OBLIGATORIA CON GOOGLE
    ============================================================ */
 const firebaseConfig = {
     apiKey: "TU_API_KEY",
@@ -12,6 +12,77 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+
+/* ---------- AUTENTICACIÓN OBLIGATORIA CON GOOGLE ---------- */
+const auth = firebase.auth();
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+const authGate      = document.getElementById('auth-gate');
+const authBtn       = document.getElementById('auth-google-btn');
+const authErrorEl   = document.getElementById('auth-gate-error');
+const appContainer  = document.querySelector('.app-container');
+
+function showAuthGate() {
+    if (authGate) {
+        authGate.classList.remove('hidden');
+        authGate.setAttribute('aria-hidden', 'false');
+    }
+    if (appContainer) appContainer.classList.add('auth-locked');
+    document.body.style.overflow = 'hidden';
+}
+
+function hideAuthGate() {
+    if (authGate) {
+        authGate.classList.add('hidden');
+        authGate.setAttribute('aria-hidden', 'true');
+    }
+    if (appContainer) appContainer.classList.remove('auth-locked');
+    document.body.style.overflow = '';
+}
+
+function setAuthError(msg) {
+    if (authErrorEl) authErrorEl.textContent = msg || '';
+}
+
+showAuthGate();
+
+auth.onAuthStateChanged((user) => {
+    if (user) {
+        window.__currentUser = user;
+        console.log('✅ Sesión iniciada:', user.email, '| UID:', user.uid);
+        hideAuthGate();
+    } else {
+        window.__currentUser = null;
+        console.log('🔒 Sin sesión. App bloqueada.');
+        showAuthGate();
+    }
+});
+
+if (authBtn) {
+    authBtn.addEventListener('click', async () => {
+        setAuthError('');
+        authBtn.disabled = true;
+        const originalHTML = authBtn.innerHTML;
+        authBtn.innerHTML = '<span>Conectando…</span>';
+        try {
+            await auth.signInWithPopup(googleProvider);
+        } catch (err) {
+            console.error('Error al iniciar sesión:', err);
+            let msg = 'No se pudo iniciar sesión. Intenta de nuevo.';
+            if (err && err.code === 'auth/popup-closed-by-user')        msg = 'Cancelaste el inicio de sesión.';
+            else if (err && err.code === 'auth/popup-blocked')           msg = 'Permite las ventanas emergentes para iniciar sesión.';
+            else if (err && err.code === 'auth/network-request-failed')  msg = 'Sin conexión. Revisa tu internet.';
+            else if (err && err.code === 'auth/unauthorized-domain')     msg = 'Dominio no autorizado en Firebase. Revisa la consola.';
+            else if (err && err.code === 'auth/cancelled-popup-request') msg = 'Ya hay una ventana de login abierta.';
+            setAuthError(msg);
+        } finally {
+            authBtn.disabled = false;
+            authBtn.innerHTML = originalHTML;
+        }
+    });
+}
+/* ---------- FIN AUTENTICACIÓN ---------- */
 
 let firebaseDocsCache = [];
 window.__showAllSongs = false;
