@@ -83,7 +83,6 @@ auth.onAuthStateChanged((user) => {
         window.__currentUser = user;
         console.log('✅ Sesión iniciada:', user.email, '| UID:', user.uid);
         hideAuthGate();
-        // Re-calcular oyentes ahora que ya hay sesión
         cargarOyentesDeTodas();
     } else {
         window.__currentUser = null;
@@ -125,13 +124,8 @@ if (authBtn) {
    ============================================================ */
 const DIAS_VENTANA = 28;
 
-// Caché local de oyentes por canción (para no leer Firestore a cada rato)
-let oyentesCache = {}; // { nombreCancion: { uid: Date, ... } }
+let oyentesCache = {};
 
-/**
- * Verifica si el usuario ya escuchó esta canción en los últimos 28 días.
- * Devuelve true si es nuevo oyente (o pasaron 28 días), false si ya contó.
- */
 function esNuevoOyente(nombreCancion, uid) {
     const data = oyentesCache[nombreCancion] || {};
     const fecha = data[uid];
@@ -140,9 +134,6 @@ function esNuevoOyente(nombreCancion, uid) {
     return diffDias >= DIAS_VENTANA;
 }
 
-/**
- * Cuenta cuántos oyentes únicos hay en la ventana de 28 días.
- */
 function contarOyentes(nombreCancion) {
     const data = oyentesCache[nombreCancion] || {};
     const ahora = Date.now();
@@ -155,24 +146,17 @@ function contarOyentes(nombreCancion) {
     return count;
 }
 
-/**
- * Registra al usuario como oyente de esta canción en Firestore.
- * Solo si es nuevo oyente (nuevo o pasaron los 28 días).
- */
 async function registrarOyente(nombreCancion) {
     const user = firebase.auth().currentUser;
     if (!user) return;
     const uid = user.uid;
 
-    // Actualizar caché local
     if (!oyentesCache[nombreCancion]) oyentesCache[nombreCancion] = {};
     oyentesCache[nombreCancion][uid] = new Date();
 
-    // Actualizar contador visual
     const item = buscarItemPorTitulo(nombreCancion);
     if (item) pintarReproducciones(item, contarOyentes(nombreCancion));
 
-    // Guardar en Firestore
     try {
         const docRef = db.collection('oyentes_canciones').doc(nombreCancion);
         const docSnap = await docRef.get();
@@ -194,9 +178,6 @@ async function registrarOyente(nombreCancion) {
     }
 }
 
-/**
- * Carga los oyentes de una canción desde Firestore.
- */
 async function cargarOyentesCancion(nombreCancion) {
     try {
         const docRef = db.collection('oyentes_canciones').doc(nombreCancion);
@@ -220,9 +201,6 @@ async function cargarOyentesCancion(nombreCancion) {
     }
 }
 
-/**
- * Carga oyentes de TODAS las canciones visibles.
- */
 async function cargarOyentesDeTodas() {
     const items = document.querySelectorAll('.playlist-item');
     const promesas = [];
@@ -237,9 +215,6 @@ async function cargarOyentesDeTodas() {
     console.log('🔥 Oyentes cargados para todas las canciones');
 }
 
-/**
- * Busca un .playlist-item por su título exacto.
- */
 function buscarItemPorTitulo(titulo) {
     const items = document.querySelectorAll('.playlist-item');
     for (const item of items) {
@@ -607,7 +582,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const titulo = getItemTitle(currentItem);
             const user = firebase.auth().currentUser;
 
-            // 🎯 Nuevo sistema: contar oyente único con ventana de 28 días
             if (titulo && user && esNuevoOyente(titulo, user.uid)) {
                 await registrarOyente(titulo);
             }
@@ -932,7 +906,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     (async () => {
         await cargarDocsDeFirebase();
-        // Cuando hay sesión, cargar oyentes
         if (firebase.auth().currentUser) {
             await cargarOyentesDeTodas();
         }
@@ -1352,19 +1325,31 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!audio) return;
         try { audio.loop = false; } catch (_) {}
     }
-    function getSequentialList() {
-        const playlist = document.getElementById('playlist');
-        if (!playlist) return [];
-        const all = Array.from(playlist.querySelectorAll('.playlist-item'));
-        if (window.__artistFilter && window.__artistFilter.length) {
-            const filtered = all.filter(i => window.__artistFilter.includes(i));
-            if (filtered.length) return filtered;
-        }
-        return all;
-    }
+
     function onEndedCapture(e) {
         const audio = document.getElementById('audio-player');
         if (!audio || e.target !== audio) return;
+
+        // 1) Registrar oyente único SOLO si es nuevo (o pasaron 28 días).
+        try {
+            const activeItem = document.querySelector('.playlist-item.active');
+            if (activeItem) {
+                const titulo = activeItem.querySelector('.item-title')?.textContent.trim() || '';
+                const user = (typeof firebase !== 'undefined' && firebase.auth)
+                    ? firebase.auth().currentUser
+                    : null;
+                if (titulo && user &&
+                    typeof esNuevoOyente === 'function' &&
+                    typeof registrarOyente === 'function' &&
+                    esNuevoOyente(titulo, user.uid)) {
+                    registrarOyente(titulo);
+                }
+            }
+        } catch (err) {
+            console.warn('Error registrando oyente en ended:', err);
+        }
+
+        // 2) Aplicar modo de repetición.
         if (repeatMode === 'one') {
             e.stopImmediatePropagation();
             e.stopPropagation();
@@ -1373,8 +1358,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (p && p.catch) p.catch(() => {});
             return;
         }
-        if (shuffleOn) return;
+
+        if (repeatMode === 'all') {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            document.dispatchEvent(new CustomEvent('omega:next'));
+            return;
+        }
     }
+
     let started = false;
     function init() {
         const fsActions = document.querySelector('.fs-actions');
