@@ -21,6 +21,18 @@ const auth = firebase.auth();
 const googleProvider = new firebase.auth.GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
+// Detectar si está dentro de un WebView (app Android, iOS, etc.)
+function isWebView() {
+    const ua = navigator.userAgent || navigator.vendor || window.opera || '';
+    return (
+        /\bwv\b/.test(ua) ||
+        (/iPhone|iPod|iPad/.test(ua) && !/Safari/.test(ua)) ||
+        (typeof window.AndroidBridge !== 'undefined') ||
+        (/Version\/[\d.]+.*Chrome/.test(ua) && /; wv\)/.test(ua)) ||
+        (/FBAN|FBAV|Instagram|Line/.test(ua))
+    );
+}
+
 const authGate      = document.getElementById('auth-gate');
 const authBtn       = document.getElementById('auth-google-btn');
 const authErrorEl   = document.getElementById('auth-gate-error');
@@ -50,6 +62,25 @@ function setAuthError(msg) {
 
 showAuthGate();
 
+// PRIMERO: capturar resultado de un posible redirect previo (WebView)
+auth.getRedirectResult()
+    .then((result) => {
+        if (result && result.user) {
+            console.log('✅ Vuelto de redirect:', result.user.email);
+        }
+    })
+    .catch((err) => {
+        console.error('Error en getRedirectResult:', err);
+        // Mostrar error si el redirect falló
+        if (err && err.code) {
+            let msg = 'Error al iniciar sesión con Google.';
+            if (err.code === 'auth/unauthorized-domain') msg = 'Dominio no autorizado en Firebase.';
+            else if (err.code === 'auth/network-request-failed') msg = 'Sin conexión. Revisa tu internet.';
+            else if (err.code === 'auth/operation-not-allowed') msg = 'Google no está habilitado en Firebase.';
+            setAuthError(msg);
+        }
+    });
+
 auth.onAuthStateChanged((user) => {
     if (user) {
         window.__currentUser = user;
@@ -68,8 +99,18 @@ if (authBtn) {
         authBtn.disabled = true;
         const originalHTML = authBtn.innerHTML;
         authBtn.innerHTML = '<span>Conectando…</span>';
+
         try {
-            await auth.signInWithPopup(googleProvider);
+            if (isWebView()) {
+                // 📱 WebView: usar redirect (popup no funciona bien)
+                console.log('📱 WebView detectado: usando signInWithRedirect');
+                await auth.signInWithRedirect(googleProvider);
+                // La página se va a Google y regresa. onAuthStateChanged se encarga.
+            } else {
+                // 🖥️ Navegador normal: popup
+                console.log('🖥️ Navegador normal: usando signInWithPopup');
+                await auth.signInWithPopup(googleProvider);
+            }
         } catch (err) {
             console.error('Error al iniciar sesión:', err);
             let msg = 'No se pudo iniciar sesión. Intenta de nuevo.';
