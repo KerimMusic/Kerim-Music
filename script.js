@@ -1,5 +1,5 @@
 /* ============================================================
-   CONFIGURACIÓN DE FIREBASE (TUS CREDENCIALES REALES)
+   CONFIGURACIÓN DE FIREBASE
    ============================================================ */
 const firebaseConfig = {
     apiKey: "AIzaSyDMabE70hIApcNU5RY3_WEEIF-BWUzO0K4",
@@ -21,7 +21,6 @@ const auth = firebase.auth();
 const googleProvider = new firebase.auth.GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-// Detectar si está dentro de un WebView (app Android, iOS, etc.)
 function isWebView() {
     const ua = navigator.userAgent || navigator.vendor || window.opera || '';
     return (
@@ -62,7 +61,6 @@ function setAuthError(msg) {
 
 showAuthGate();
 
-// PRIMERO: capturar resultado de un posible redirect previo (WebView)
 auth.getRedirectResult()
     .then((result) => {
         if (result && result.user) {
@@ -71,7 +69,6 @@ auth.getRedirectResult()
     })
     .catch((err) => {
         console.error('Error en getRedirectResult:', err);
-        // Mostrar error si el redirect falló
         if (err && err.code) {
             let msg = 'Error al iniciar sesión con Google.';
             if (err.code === 'auth/unauthorized-domain') msg = 'Dominio no autorizado en Firebase.';
@@ -86,6 +83,8 @@ auth.onAuthStateChanged((user) => {
         window.__currentUser = user;
         console.log('✅ Sesión iniciada:', user.email, '| UID:', user.uid);
         hideAuthGate();
+        // Re-calcular oyentes ahora que ya hay sesión
+        cargarOyentesDeTodas();
     } else {
         window.__currentUser = null;
         console.log('🔒 Sin sesión. App bloqueada.');
@@ -99,16 +98,10 @@ if (authBtn) {
         authBtn.disabled = true;
         const originalHTML = authBtn.innerHTML;
         authBtn.innerHTML = '<span>Conectando…</span>';
-
         try {
             if (isWebView()) {
-                // 📱 WebView: usar redirect (popup no funciona bien)
-                console.log('📱 WebView detectado: usando signInWithRedirect');
                 await auth.signInWithRedirect(googleProvider);
-                // La página se va a Google y regresa. onAuthStateChanged se encarga.
             } else {
-                // 🖥️ Navegador normal: popup
-                console.log('🖥️ Navegador normal: usando signInWithPopup');
                 await auth.signInWithPopup(googleProvider);
             }
         } catch (err) {
@@ -117,8 +110,7 @@ if (authBtn) {
             if (err && err.code === 'auth/popup-closed-by-user')        msg = 'Cancelaste el inicio de sesión.';
             else if (err && err.code === 'auth/popup-blocked')           msg = 'Permite las ventanas emergentes para iniciar sesión.';
             else if (err && err.code === 'auth/network-request-failed')  msg = 'Sin conexión. Revisa tu internet.';
-            else if (err && err.code === 'auth/unauthorized-domain')     msg = 'Dominio no autorizado en Firebase. Revisa la consola.';
-            else if (err && err.code === 'auth/cancelled-popup-request') msg = 'Ya hay una ventana de login abierta.';
+            else if (err && err.code === 'auth/unauthorized-domain')     msg = 'Dominio no autorizado en Firebase.';
             setAuthError(msg);
         } finally {
             authBtn.disabled = false;
@@ -127,6 +119,135 @@ if (authBtn) {
     });
 }
 /* ---------- FIN AUTENTICACIÓN ---------- */
+
+/* ============================================================
+   0.2. SISTEMA DE OYENTES ÚNICOS (ventana móvil de 28 días)
+   ============================================================ */
+const DIAS_VENTANA = 28;
+
+// Caché local de oyentes por canción (para no leer Firestore a cada rato)
+let oyentesCache = {}; // { nombreCancion: { uid: Date, ... } }
+
+/**
+ * Verifica si el usuario ya escuchó esta canción en los últimos 28 días.
+ * Devuelve true si es nuevo oyente (o pasaron 28 días), false si ya contó.
+ */
+function esNuevoOyente(nombreCancion, uid) {
+    const data = oyentesCache[nombreCancion] || {};
+    const fecha = data[uid];
+    if (!fecha) return true;
+    const diffDias = (Date.now() - fecha.getTime()) / (1000 * 60 * 60 * 24);
+    return diffDias >= DIAS_VENTANA;
+}
+
+/**
+ * Cuenta cuántos oyentes únicos hay en la ventana de 28 días.
+ */
+function contarOyentes(nombreCancion) {
+    const data = oyentesCache[nombreCancion] || {};
+    const ahora = Date.now();
+    const limite = ahora - DIAS_VENTANA * 24 * 60 * 60 * 1000;
+    let count = 0;
+    for (const uid in data) {
+        const fecha = data[uid];
+        if (fecha && fecha.getTime() >= limite) count++;
+    }
+    return count;
+}
+
+/**
+ * Registra al usuario como oyente de esta canción en Firestore.
+ * Solo si es nuevo oyente (nuevo o pasaron los 28 días).
+ */
+async function registrarOyente(nombreCancion) {
+    const user = firebase.auth().currentUser;
+    if (!user) return;
+    const uid = user.uid;
+
+    // Actualizar caché local
+    if (!oyentesCache[nombreCancion]) oyentesCache[nombreCancion] = {};
+    oyentesCache[nombreCancion][uid] = new Date();
+
+    // Actualizar contador visual
+    const item = buscarItemPorTitulo(nombreCancion);
+    if (item) pintarReproducciones(item, contarOyentes(nombreCancion));
+
+    // Guardar en Firestore
+    try {
+        const docRef = db.collection('oyentes_canciones').doc(nombreCancion);
+        const docSnap = await docRef.get();
+
+        if (docSnap.exists) {
+            await docRef.update({
+                [`oyentes.${uid}`]: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        } else {
+            await docRef.set({
+                oyentes: {
+                    [uid]: firebase.firestore.FieldValue.serverTimestamp()
+                }
+            });
+        }
+        console.log(`✅ Oyente registrado en "${nombreCancion}"`);
+    } catch (e) {
+        console.error('Error al registrar oyente:', e);
+    }
+}
+
+/**
+ * Carga los oyentes de una canción desde Firestore.
+ */
+async function cargarOyentesCancion(nombreCancion) {
+    try {
+        const docRef = db.collection('oyentes_canciones').doc(nombreCancion);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+            const data = docSnap.data();
+            const oyentes = data.oyentes || {};
+            oyentesCache[nombreCancion] = {};
+            for (const uid in oyentes) {
+                const fecha = oyentes[uid];
+                if (fecha && typeof fecha.toDate === 'function') {
+                    oyentesCache[nombreCancion][uid] = fecha.toDate();
+                }
+            }
+        } else {
+            oyentesCache[nombreCancion] = {};
+        }
+    } catch (e) {
+        console.warn('No se pudieron cargar oyentes de:', nombreCancion, e);
+        oyentesCache[nombreCancion] = {};
+    }
+}
+
+/**
+ * Carga oyentes de TODAS las canciones visibles.
+ */
+async function cargarOyentesDeTodas() {
+    const items = document.querySelectorAll('.playlist-item');
+    const promesas = [];
+    items.forEach(item => {
+        const titulo = item.querySelector('.item-title')?.textContent.trim() || '';
+        if (!titulo) return;
+        promesas.push(cargarOyentesCancion(titulo).then(() => {
+            pintarReproducciones(item, contarOyentes(titulo));
+        }));
+    });
+    await Promise.all(promesas);
+    console.log('🔥 Oyentes cargados para todas las canciones');
+}
+
+/**
+ * Busca un .playlist-item por su título exacto.
+ */
+function buscarItemPorTitulo(titulo) {
+    const items = document.querySelectorAll('.playlist-item');
+    for (const item of items) {
+        const t = item.querySelector('.item-title')?.textContent.trim() || '';
+        if (t === titulo) return item;
+    }
+    return null;
+}
 
 /* ============================================================
    1. DATOS GLOBALES Y UTILIDADES
@@ -187,32 +308,15 @@ function pintarReproducciones(item, count) {
         badge.className = 'item-plays';
         info.appendChild(badge);
     }
-    badge.textContent = `▶ ${count}`;
+    badge.textContent = `👥 ${count} oyente${count === 1 ? '' : 's'}`;
 }
 
 function pintarTodasLasReproducciones() {
     document.querySelectorAll('.playlist-item').forEach(item => {
         const title = item.querySelector('.item-title')?.textContent.trim() || '';
-        const doc = findFirebaseDoc(title);
-        if (doc) pintarReproducciones(item, doc.data.reproducciones || 0);
+        if (!title) return;
+        pintarReproducciones(item, contarOyentes(title));
     });
-}
-
-async function cambiarReproducciones(item, delta) {
-    if (!item || !delta) return;
-    const title = item.querySelector('.item-title')?.textContent.trim() || '';
-    const doc = findFirebaseDoc(title);
-    if (!doc) return;
-    try {
-        await doc.ref.update({
-            reproducciones: firebase.firestore.FieldValue.increment(delta)
-        });
-        const nuevo = Math.max(0, (doc.data.reproducciones || 0) + delta);
-        doc.data.reproducciones = nuevo;
-        pintarReproducciones(item, nuevo);
-    } catch (e) {
-        console.warn('No se pudo actualizar reproducciones:', e);
-    }
 }
 
 window.__artistFilter = null;
@@ -500,17 +604,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentTimeEl) currentTimeEl.textContent = '0:00';
 
         if (completed && currentItem) {
-            const key = getItemKey(currentItem);
-            if (key) {
-                const data = getLikeData(key);
-                const alreadyLiked = !!(data && data.liked !== false);
-                if (alreadyLiked) {
-                    setLikeData(key, { liked: true, ts: Date.now(), locked: true });
-                } else {
-                    setLikeData(key, { liked: true, ts: Date.now(), locked: true });
-                    updateLikeUI();
-                    await cambiarReproducciones(currentItem, 1);
-                }
+            const titulo = getItemTitle(currentItem);
+            const user = firebase.auth().currentUser;
+
+            // 🎯 Nuevo sistema: contar oyente único con ventana de 28 días
+            if (titulo && user && esNuevoOyente(titulo, user.uid)) {
+                await registrarOyente(titulo);
             }
         }
         playRandomItem();
@@ -686,89 +785,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fsClose    = document.getElementById('fs-close');
     const fsLikeBtn  = document.getElementById('fs-like');
 
-    const LIKES_KEY    = 'omega_likes_v1';
-    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000;
-
-    function _readMap(key) {
-        try { return JSON.parse(localStorage.getItem(key) || '{}'); }
-        catch (_) { return {}; }
-    }
-    function _writeMap(key, map) {
-        try { localStorage.setItem(key, JSON.stringify(map)); } catch (_) {}
-    }
-    function getItemKey(item) {
-        if (!item) return '';
-        return normalizeStr(item.querySelector('.item-title')?.textContent.trim() || '');
-    }
-    function getLikeData(key) {
-        if (!key) return null;
-        const likes = _readMap(LIKES_KEY);
-        const val = likes[key];
-        if (val === undefined || val === null || val === false) return null;
-        if (val === true) return { liked: true, ts: 0, locked: false };
-        if (typeof val === 'object') return val;
-        return null;
-    }
-    function isLikeLocked(key) {
-        const data = getLikeData(key);
-        if (!data || !data.locked) return false;
-        return (Date.now() - (data.ts || 0)) < LIKE_LOCK_MS;
-    }
-    function setLikeData(key, data) {
-        if (!key) return;
-        const likes = _readMap(LIKES_KEY);
-        likes[key] = data;
-        _writeMap(LIKES_KEY, likes);
-    }
-    function removeLikeData(key) {
-        if (!key) return;
-        const likes = _readMap(LIKES_KEY);
-        delete likes[key];
-        _writeMap(LIKES_KEY, likes);
-    }
-    function showNotification(message) {
-        let toast = document.getElementById('omega-toast');
-        if (!toast) {
-            toast = document.createElement('div');
-            toast.id = 'omega-toast';
-            toast.setAttribute('role', 'status');
-            toast.setAttribute('aria-live', 'polite');
-            document.body.appendChild(toast);
-        }
-        toast.textContent = message;
-        toast.classList.remove('visible');
-        void toast.offsetWidth;
-        toast.classList.add('visible');
-        clearTimeout(toast._hideTimer);
-        toast._hideTimer = setTimeout(() => toast.classList.remove('visible'), 4500);
-    }
-    function updateLikeUI() {
-        if (!fsLikeBtn) return;
-        const key = getItemKey(currentItem);
-        if (!key) { fsLikeBtn.classList.remove('active'); return; }
-        const data = getLikeData(key);
-        const isLiked = !!(data && data.liked !== false);
-        fsLikeBtn.classList.toggle('active', isLiked);
-    }
-    fsLikeBtn && fsLikeBtn.addEventListener('click', async () => {
-        if (!currentItem) return;
-        const key = getItemKey(currentItem);
-        if (!key) return;
-        if (isLikeLocked(key)) {
-            showNotification('No puedes manipular el botón de Me gusta durante 30 días. ¡Disfrútala!');
-            return;
-        }
-        const data = getLikeData(key);
-        if (data && data.liked !== false) {
-            removeLikeData(key);
-            updateLikeUI();
-            await cambiarReproducciones(currentItem, -1);
-        } else {
-            setLikeData(key, { liked: true, ts: Date.now(), locked: true });
-            updateLikeUI();
-            await cambiarReproducciones(currentItem, 1);
-        }
-    });
+    function updateLikeUI() {}
 
     let lastCoverSrc = '';
     function syncFromMini() {
@@ -784,7 +801,6 @@ document.addEventListener('DOMContentLoaded', () => {
             lastCoverSrc = '';
         }
         fsTitle.textContent = newTitle;
-        updateLikeUI();
     }
     const syncObserver = new MutationObserver(() => syncFromMini());
     syncObserver.observe(playerCover, { attributes: true, attributeFilter: ['src'] });
@@ -912,15 +928,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 openArtistFromTitle();
             }
         });
-        fsTitle.addEventListener('pointerdown', () => { fsTitle.style.opacity = '0.7'; });
-        ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
-            fsTitle.addEventListener(evt, () => { fsTitle.style.opacity = ''; });
-        });
     })();
 
     (async () => {
         await cargarDocsDeFirebase();
-        pintarTodasLasReproducciones();
+        // Cuando hay sesión, cargar oyentes
+        if (firebase.auth().currentUser) {
+            await cargarOyentesDeTodas();
+        }
         if (typeof window.__applySearchVisibility === 'function') {
             window.__applySearchVisibility();
         }
@@ -1136,8 +1151,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let total = 0;
             items.forEach(item => {
                 const title = item.querySelector('.item-title')?.textContent.trim() || '';
-                const doc = findFirebaseDoc(title);
-                if (doc && doc.data && typeof doc.data.reproducciones === 'number') total += doc.data.reproducciones;
+                total += contarOyentes(title);
             });
             return total;
         }
@@ -1257,7 +1271,6 @@ document.addEventListener('DOMContentLoaded', () => {
     'use strict';
     const REPEAT_KEY  = 'omega_repeat_mode_v1';
     const SHUFFLE_KEY = 'omega_shuffle_v1';
-    const LIKES_KEY   = 'omega_likes_v1';
     let repeatMode = 'off';
     let shuffleOn  = true;
 
@@ -1349,63 +1362,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         return all;
     }
-    function registrarReproduccionCompletada(item) {
-        if (!item || typeof normalizeStr !== 'function') return;
-        const title = item.querySelector('.item-title')?.textContent.trim() || '';
-        if (!title) return;
-        const key = normalizeStr(title);
-        if (!key) return;
-        let map = {};
-        try { map = JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); } catch (_) { map = {}; }
-        let data = map[key];
-        if (data === true) data = { liked: true, ts: 0, locked: false };
-        const alreadyLiked = !!(data && typeof data === 'object' && data.liked !== false);
-        map[key] = { liked: true, ts: Date.now(), locked: true };
-        try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
-        if (alreadyLiked) return;
-        if (typeof cambiarReproducciones === 'function') cambiarReproducciones(item, 1);
-    }
-    function detenerAlFinal(audio) {
-        try { audio.pause(); } catch (_) {}
-        try { audio.currentTime = 0; } catch (_) {}
-        const progressBarEl = document.getElementById('progress-bar');
-        const currentTimeEl = document.getElementById('current-time');
-        if (progressBarEl) {
-            progressBarEl.style.setProperty('--progress', '0%');
-            progressBarEl.setAttribute('aria-valuenow', 0);
-        }
-        if (currentTimeEl) currentTimeEl.textContent = '0:00';
-        try { audio.dispatchEvent(new Event('pause')); } catch (_) {}
-    }
     function onEndedCapture(e) {
         const audio = document.getElementById('audio-player');
         if (!audio || e.target !== audio) return;
         if (repeatMode === 'one') {
             e.stopImmediatePropagation();
             e.stopPropagation();
-            const activeItem = document.querySelector('.playlist-item.active');
-            if (activeItem) registrarReproduccionCompletada(activeItem);
             try { audio.currentTime = 0; } catch (_) {}
             const p = audio.play();
             if (p && p.catch) p.catch(() => {});
             return;
         }
         if (shuffleOn) return;
-        e.stopImmediatePropagation();
-        e.stopPropagation();
-        const playlist = document.getElementById('playlist');
-        if (!playlist) return;
-        const list = getSequentialList();
-        if (!list.length) return;
-        const active = playlist.querySelector('.playlist-item.active');
-        const idx    = list.indexOf(active);
-        registrarReproduccionCompletada(active);
-        let nextItem = null;
-        if (idx === -1) nextItem = list[0];
-        else if (idx + 1 < list.length) nextItem = list[idx + 1];
-        else if (repeatMode === 'all')  nextItem = list[0];
-        if (nextItem) nextItem.click();
-        else          detenerAlFinal(audio);
     }
     let started = false;
     function init() {
@@ -1610,10 +1578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return el ? el.textContent.trim() : '';
     }
     function getPlays(item) {
-        if (typeof findFirebaseDoc !== 'function') return 0;
-        const doc = findFirebaseDoc(getItemTitle(item));
-        if (doc && doc.data && typeof doc.data.reproducciones === 'number') return doc.data.reproducciones;
-        return 0;
+        return contarOyentes(getItemTitle(item));
     }
     function shuffle(arr) {
         const a = arr.slice();
@@ -1754,7 +1719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const carousel = document.getElementById('carousel-top');
         if (!sec || !carousel) return;
         clearNode(carousel);
-        const pool = getAllItems().filter(it => getPlays(it) > 20);
+        const pool = getAllItems().filter(it => getPlays(it) > 5);
         const picked = shuffle(pool).slice(0, CAROUSEL_LIMIT);
         if (!picked.length) { sec.style.display = 'none'; return; }
         sec.style.display = '';
@@ -1835,8 +1800,7 @@ document.addEventListener('DOMContentLoaded', () => {
         (function loop() {
             tries++;
             const hasItems = getAllItems().length > 0;
-            const fbReady  = (typeof firebaseDocsCache !== 'undefined') && firebaseDocsCache.length > 0;
-            if (hasItems && (fbReady || tries >= 20)) {
+            if (hasItems || tries >= 20) {
                 buildAll();
                 initHistoryTracking();
                 return;
@@ -1844,354 +1808,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tries >= 40) return;
             setTimeout(loop, 200);
         })();
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
-    } else { boot(); }
-})();
-
-/* ============================================================
-   9. EXPIRACIÓN AUTOMÁTICA DEL ME GUSTA
-   ============================================================ */
-(function () {
-    'use strict';
-    const LIKES_KEY    = 'omega_likes_v1';
-    const LIKE_LOCK_MS = 30 * 24 * 60 * 60 * 1000;
-    function _read() {
-        try { return JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); } catch (_) { return {}; }
-    }
-    function _write(map) {
-        try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
-    }
-    function _norm(str) {
-        if (typeof normalizeStr === 'function') return normalizeStr(str);
-        return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-    }
-    function _findItemByKey(key, playlist) {
-        if (!playlist || !key) return null;
-        const items = playlist.querySelectorAll('.playlist-item');
-        for (const it of items) {
-            const title = it.querySelector('.item-title')?.textContent.trim() || '';
-            if (_norm(title) === key) return it;
-        }
-        return null;
-    }
-    async function limpiarMeGustasExpirados() {
-        const map   = _read();
-        const ahora = Date.now();
-        const claves = Object.keys(map);
-        if (!claves.length) return;
-        const playlist  = document.getElementById('playlist');
-        const expirados = [];
-        claves.forEach(key => {
-            const data = map[key];
-            if (!data || typeof data !== 'object') return;
-            if (data.liked === false) return;
-            if (!data.locked) return;
-            const ts = data.ts || 0;
-            if (ts > 0 && (ahora - ts) >= LIKE_LOCK_MS) expirados.push(key);
-        });
-        if (!expirados.length) return;
-        for (const key of expirados) {
-            delete map[key];
-            const item = _findItemByKey(key, playlist);
-            if (item && typeof cambiarReproducciones === 'function') {
-                try { await cambiarReproducciones(item, -1); } catch (e) {}
-            }
-        }
-        _write(map);
-        try {
-            const fsLikeBtn  = document.getElementById('fs-like');
-            const activeItem = playlist ? playlist.querySelector('.playlist-item.active') : null;
-            if (fsLikeBtn && activeItem) {
-                const activeKey = _norm(activeItem.querySelector('.item-title')?.textContent.trim() || '');
-                if (expirados.includes(activeKey)) fsLikeBtn.classList.remove('active');
-            }
-        } catch (_) {}
-    }
-    function boot() {
-        setTimeout(limpiarMeGustasExpirados, 2000);
-        setInterval(limpiarMeGustasExpirados, 5 * 60 * 1000);
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
-    } else { boot(); }
-})();
-
-/* ============================================================
-   10. VISTA EXCLUSIVA DEL ÁLBUM
-   ============================================================ */
-(function () {
-    'use strict';
-    const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
-    const LIKES_KEY    = 'omega_likes_v1';
-    let albumItems = [], albumQueue = [], albumIndex = 0, albumPlaying = false, listMode = false, internalClick = false;
-    let albumView = null, avTitle = null, avToggle = null, avScroll = null, avCarousel = null, avList = null, avPlayAll = null, avBack = null;
-    function norm(str) {
-        if (typeof normalizeStr === 'function') return normalizeStr(str);
-        return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-    }
-    function clearNode(el) { while (el && el.firstChild) el.removeChild(el.firstChild); }
-    function getPlaylist() { return document.getElementById('playlist'); }
-    function getAudio()    { return document.getElementById('audio-player'); }
-    function getItemTitle(item) { return item ? (item.querySelector('.item-title')?.textContent.trim() || '') : ''; }
-    function getItemCover(item) {
-        const img = item ? item.querySelector('.thumbnail img') : null;
-        return img ? (img.getAttribute('src') || '') : '';
-    }
-    function getItemAlbum(item) {
-        const el = item ? item.querySelector('.Album') : null;
-        return el ? el.textContent.trim() : '';
-    }
-    function getItemArtists(item) {
-        const sub = item ? (item.querySelector('.item-subtitle')?.textContent || '') : '';
-        const idx = sub.indexOf('·');
-        const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
-        if (!namePart) return [];
-        const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
-        return parts.length ? parts : [namePart];
-    }
-    function findAlbumItems(albumName, artistName) {
-        const pl = getPlaylist();
-        if (!pl) return [];
-        const nAlbum  = norm(albumName);
-        const nArtist = norm(artistName);
-        if (!nAlbum) return [];
-        return Array.from(pl.querySelectorAll('.playlist-item')).filter(it => {
-            if (norm(getItemAlbum(it)) !== nAlbum) return false;
-            if (!nArtist) return true;
-            return getItemArtists(it).some(a => norm(a) === nArtist);
-        });
-    }
-    function renderCarousel() {
-        if (!avCarousel) return;
-        clearNode(avCarousel);
-        albumItems.forEach(item => {
-            const title  = getItemTitle(item);
-            const cover  = getItemCover(item);
-            const artist = getItemArtists(item)[0] || '';
-            const card = document.createElement('button');
-            card.type = 'button';
-            card.className = 'av-card';
-            card.setAttribute('aria-label', title);
-            const thumb = document.createElement('div');
-            thumb.className = 'av-card-thumb';
-            if (cover) {
-                const img = document.createElement('img');
-                img.src = cover; img.alt = title; img.loading = 'lazy';
-                thumb.appendChild(img);
-            }
-            card.appendChild(thumb);
-            const t = document.createElement('span');
-            t.className = 'av-card-title';
-            t.textContent = title;
-            card.appendChild(t);
-            if (artist) {
-                const s = document.createElement('span');
-                s.className = 'av-card-sub';
-                s.textContent = artist;
-                card.appendChild(s);
-            }
-            card.addEventListener('click', () => playItem(item));
-            avCarousel.appendChild(card);
-        });
-    }
-    function renderList() {
-        if (!avList) return;
-        clearNode(avList);
-        albumItems.forEach(item => {
-            const title = getItemTitle(item);
-            const cover = getItemCover(item);
-            const sub   = item.querySelector('.item-subtitle')?.textContent.trim() || '';
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = 'av-row';
-            row.setAttribute('aria-label', title);
-            if (cover) {
-                const thumb = document.createElement('div');
-                thumb.className = 'thumbnail';
-                const img = document.createElement('img');
-                img.src = cover; img.alt = title; img.loading = 'lazy';
-                thumb.appendChild(img);
-                row.appendChild(thumb);
-            }
-            const info = document.createElement('div');
-            info.className = 'item-info';
-            const t = document.createElement('span');
-            t.className = 'item-title';
-            t.textContent = title;
-            info.appendChild(t);
-            if (sub) {
-                const s = document.createElement('span');
-                s.className = 'item-subtitle';
-                s.textContent = sub;
-                info.appendChild(s);
-            }
-            row.appendChild(info);
-            row.addEventListener('click', () => playItem(item));
-            avList.appendChild(row);
-        });
-    }
-    function setListMode(on) {
-        listMode = !!on;
-        if (avCarousel) avCarousel.classList.toggle('hidden', listMode);
-        if (avList)     avList.classList.toggle('visible', listMode);
-        if (avToggle)   avToggle.textContent = listMode ? 'Modo de carrusel' : 'Modo de lista';
-        updateAlbumHighlight();
-    }
-    function updateAlbumHighlight() {
-        const pl = getPlaylist();
-        const active = pl ? pl.querySelector('.playlist-item.active') : null;
-        if (avCarousel) {
-            avCarousel.querySelectorAll('.av-card').forEach((card, i) => {
-                card.classList.toggle('playing', albumItems[i] === active);
-            });
-        }
-        if (avList) {
-            avList.querySelectorAll('.av-row').forEach((row, i) => {
-                row.classList.toggle('active', albumItems[i] === active);
-            });
-        }
-    }
-    function playItem(item) {
-        if (!item) return;
-        if (albumPlaying) {
-            const idx = albumQueue.indexOf(item);
-            if (idx === -1) albumPlaying = false;
-            else            albumIndex   = idx;
-        }
-        internalClick = true;
-        try { item.click(); } finally { internalClick = false; }
-    }
-    function startAlbumPlayback() {
-        if (!albumItems.length) return;
-        albumQueue   = albumItems.slice();
-        albumPlaying = true;
-        albumIndex   = 0;
-        playItem(albumQueue[0]);
-    }
-    function registerCompletedPlay(item) {
-        if (!item || typeof normalizeStr !== 'function') return;
-        const title = getItemTitle(item);
-        if (!title) return;
-        const key = norm(title);
-        if (!key) return;
-        let map = {};
-        try { map = JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); } catch (_) { map = {}; }
-        let data = map[key];
-        if (data === true) data = { liked: true, ts: 0, locked: false };
-        const alreadyLiked = !!(data && typeof data === 'object' && data.liked !== false);
-        map[key] = { liked: true, ts: Date.now(), locked: true };
-        try { localStorage.setItem(LIKES_KEY, JSON.stringify(map)); } catch (_) {}
-        if (alreadyLiked) return;
-        if (typeof cambiarReproducciones === 'function') cambiarReproducciones(item, 1);
-    }
-    function onAlbumEnded(e) {
-        const audio = getAudio();
-        if (!audio || e.target !== audio) return;
-        if (!albumPlaying) return;
-        const pl = getPlaylist();
-        const active = pl ? pl.querySelector('.playlist-item.active') : null;
-        if (active && albumQueue[albumIndex] && active !== albumQueue[albumIndex]) {
-            albumPlaying = false;
-            return;
-        }
-        e.stopImmediatePropagation();
-        e.stopPropagation();
-        const finished = albumQueue[albumIndex];
-        registerCompletedPlay(finished);
-        albumIndex++;
-        if (albumIndex < albumQueue.length) playItem(albumQueue[albumIndex]);
-        else { albumPlaying = false; resetAfterAlbum(); }
-    }
-    function resetAfterAlbum() {
-        const audio = getAudio();
-        if (!audio) return;
-        try { audio.pause(); } catch (_) {}
-        try { audio.currentTime = 0; } catch (_) {}
-        const pb = document.getElementById('progress-bar');
-        const ct = document.getElementById('current-time');
-        if (pb) { pb.style.setProperty('--progress', '0%'); pb.setAttribute('aria-valuenow', '0'); }
-        if (ct) ct.textContent = '0:00';
-        const icon = document.getElementById('play-icon');
-        if (icon) { icon.innerHTML = '<polygon points="5,3 19,12 5,21" fill="#ffffff" />'; icon.style.marginLeft = '3px'; }
-        const btn = document.getElementById('play-button');
-        if (btn) btn.setAttribute('aria-label', 'Reproducir');
-        try { audio.dispatchEvent(new Event('pause')); } catch (_) {}
-    }
-    function openAlbum(albumName, artistName) {
-        const items = findAlbumItems(albumName, artistName);
-        if (!items.length) return;
-        albumItems = items;
-        if (avTitle) avTitle.textContent = albumName || 'Álbum';
-        renderCarousel();
-        renderList();
-        setListMode(false);
-        if (albumView) {
-            albumView.classList.add('visible');
-            albumView.setAttribute('aria-hidden', 'false');
-        }
-        if (avScroll) avScroll.scrollTop = 0;
-        updateAlbumHighlight();
-    }
-    function closeAlbum() {
-        if (!albumView) return;
-        albumView.classList.remove('visible');
-        albumView.setAttribute('aria-hidden', 'true');
-    }
-    function onHomeAlbumClick(e) {
-        const carousel = document.getElementById('carousel-albums');
-        if (!carousel) return;
-        if (!e.target || !carousel.contains(e.target)) return;
-        const card = e.target.closest ? e.target.closest('.home-card') : null;
-        if (!card) return;
-        const titleEl = card.querySelector('.home-card-title');
-        if (!titleEl) return;
-        const albumName  = titleEl.textContent.trim();
-        const subEl      = card.querySelector('.home-card-sub');
-        const artistName = subEl ? subEl.textContent.trim() : '';
-        e.stopPropagation();
-        e.preventDefault();
-        openAlbum(albumName, artistName);
-    }
-    function onAnyManualClick(e) {
-        if (internalClick) return;
-        const t = e.target;
-        if (!t || !t.closest) return;
-        if (t.closest('#playlist .playlist-item')) albumPlaying = false;
-    }
-    function initPlaylistObserver() {
-        const pl = getPlaylist();
-        if (!pl) return;
-        const obs = new MutationObserver(() => {
-            if (!albumPlaying) return;
-            const active = pl.querySelector('.playlist-item.active');
-            if (active && albumQueue[albumIndex] && active !== albumQueue[albumIndex]) albumPlaying = false;
-        });
-        obs.observe(pl, { subtree: true, attributes: true, attributeFilter: ['class'] });
-    }
-    function boot() {
-        albumView = document.getElementById('album-view');
-        if (!albumView) return;
-        avTitle    = document.getElementById('av-title');
-        avToggle   = document.getElementById('av-toggle');
-        avScroll   = document.getElementById('av-scroll');
-        avCarousel = document.getElementById('av-carousel');
-        avList     = document.getElementById('av-list');
-        avPlayAll  = document.getElementById('av-play-all');
-        avBack     = document.getElementById('av-back');
-        if (avBack)    avBack.addEventListener('click', closeAlbum);
-        if (avToggle)  avToggle.addEventListener('click', () => setListMode(!listMode));
-        if (avPlayAll) avPlayAll.addEventListener('click', startAlbumPlayback);
-        document.addEventListener('click', onHomeAlbumClick, true);
-        document.addEventListener('click', onAnyManualClick, true);
-        window.addEventListener('ended', onAlbumEnded, true);
-        const audio = getAudio();
-        if (audio) audio.addEventListener('play', updateAlbumHighlight);
-        initPlaylistObserver();
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && albumView.classList.contains('visible')) closeAlbum();
-        });
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);
@@ -2236,16 +1852,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!q && !window.__showAllSongs) apply();
             });
         }
-        if (pl) {
-            const obs = new MutationObserver(() => {
-                if (!window.__showAllSongs && !(getSearchInput()?.value || '').trim()) {
-                    pl.querySelectorAll('.playlist-item').forEach(it => {
-                        if (!it.style.display) it.style.display = 'none';
-                    });
-                }
-            });
-            obs.observe(pl, { childList: true });
-        }
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
@@ -2253,7 +1859,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   12. PUENTE CON LA APP ANDROID (VERSIÓN FINAL CON PORTADA)
+   12. PUENTE CON LA APP ANDROID
    ============================================================ */
 (function () {
     'use strict';
