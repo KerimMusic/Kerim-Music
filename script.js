@@ -2008,3 +2008,79 @@ document.addEventListener('DOMContentLoaded', () => {
         document.dispatchEvent(new CustomEvent('omega:prev'));
     };
 })();
+
+/* ============================================================
+   13. 🆕 CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
+   ============================================================ */
+(function () {
+    'use strict';
+
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.firestore) {
+            console.warn('Firebase no está listo, reintentando...');
+            setTimeout(init, 300);
+            return;
+        }
+
+        const db = firebase.firestore();
+        const playlist = document.getElementById('playlist');
+        if (!playlist) return;
+
+        console.log('🔥 Escuchando canciones subidas por usuarios...');
+
+        db.collection('canciones_usuarios')
+          .orderBy('fecha', 'desc')
+          .onSnapshot((snap) => {
+            // 1. Eliminar las que ya inyectamos antes (evita duplicados)
+            playlist.querySelectorAll('.playlist-item[data-user-upload="1"]')
+                    .forEach(el => el.remove());
+
+            // 2. Inyectar las nuevas
+            snap.forEach(doc => {
+                const d = doc.data();
+                if (!d.audioUrl || !d.titulo) return;
+
+                const div = document.createElement('div');
+                div.className = 'playlist-item';
+                div.dataset.src = d.audioUrl;
+                div.dataset.userUpload = '1';
+
+                const cover   = d.imagenUrl || 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
+                const artista = d.artista || 'Artista';
+
+                div.innerHTML = `
+                    <div class="thumbnail">
+                        <img src="${cover}" alt="Portada" loading="lazy">
+                    </div>
+                    <div class="item-info">
+                        <span class="item-title">${d.titulo}</span>
+                        <span class="item-subtitle">${artista} · Subido</span>
+                    </div>
+                `;
+
+                // Insertar arriba de la lista
+                playlist.insertBefore(div, playlist.firstChild);
+            });
+
+            console.log(`✅ ${snap.size} canciones subidas cargadas`);
+
+            // Refrescar carruseles del home
+            if (typeof window.__buildListenAgain === 'function') {
+                window.__buildListenAgain();
+            }
+
+            // Si el usuario ya mostró todas, que se vean las nuevas
+            if (window.__showAllSongs && typeof window.__applySearchVisibility === 'function') {
+                window.__applySearchVisibility();
+            }
+          }, (err) => {
+            console.warn('⚠️ No se pudieron cargar canciones de usuarios:', err);
+          });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
