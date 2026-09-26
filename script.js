@@ -1,20 +1,23 @@
 /* ============================================================
-   0. AUTENTICACIÓN OBLIGATORIA CON GOOGLE
+   CONFIGURACIÓN DE FIREBASE (TUS CREDENCIALES REALES)
    ============================================================ */
 const firebaseConfig = {
-    apiKey: "TU_API_KEY",
+    apiKey: "AIzaSyDMabE70hIApcNU5RY3_WEEIF-BWUzO0K4",
     authDomain: "kerim-music-a9c46.firebaseapp.com",
     projectId: "kerim-music-a9c46",
-    storageBucket: "kerim-music-a9c46.appspot.com",
-    messagingSenderId: "TU_SENDER_ID",
-    appId: "TU_APP_ID"
+    storageBucket: "kerim-music-a9c46.firebasestorage.app",
+    messagingSenderId: "470731440209",
+    appId: "1:470731440209:web:f6eba4784027a5d8c57870",
+    measurementId: "G-LBHTKL8KDK"
 };
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-
-/* ---------- AUTENTICACIÓN OBLIGATORIA CON GOOGLE ---------- */
 const auth = firebase.auth();
+
+/* ============================================================
+   0. AUTENTICACIÓN OBLIGATORIA CON GOOGLE
+   ============================================================ */
 const googleProvider = new firebase.auth.GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
@@ -84,6 +87,9 @@ if (authBtn) {
 }
 /* ---------- FIN AUTENTICACIÓN ---------- */
 
+/* ============================================================
+   1. DATOS GLOBALES Y UTILIDADES
+   ============================================================ */
 let firebaseDocsCache = [];
 window.__showAllSongs = false;
 window.__omegaShuffleOn = true;
