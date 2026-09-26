@@ -78,12 +78,18 @@ auth.getRedirectResult()
         }
     });
 
-auth.onAuthStateChanged((user) => {
+auth.onAuthStateChanged(async (user) => {
     if (user) {
         window.__currentUser = user;
         console.log('✅ Sesión iniciada:', user.email, '| UID:', user.uid);
         hideAuthGate();
-        cargarOyentesDeTodas();
+        await cargarOyentesDeTodas();
+        if (typeof window.__cargarHistorialUsuario === 'function') {
+            await window.__cargarHistorialUsuario();
+            if (typeof window.__buildListenAgain === 'function') {
+                window.__buildListenAgain();
+            }
+        }
     } else {
         window.__currentUser = null;
         console.log('🔒 Sin sesión. App bloqueada.');
@@ -223,6 +229,77 @@ function buscarItemPorTitulo(titulo) {
     }
     return null;
 }
+
+/* ============================================================
+   0.3. HISTORIAL DE REPRODUCCIONES POR USUARIO (Firestore)
+   ============================================================ */
+const MAX_HISTORIAL = 50;
+
+let historialCache = [];
+
+async function cargarHistorialUsuario() {
+    const user = firebase.auth().currentUser;
+    if (!user) { historialCache = []; return; }
+
+    try {
+        const docRef = db.collection('historial_usuarios').doc(user.uid);
+        const docSnap = await docRef.get();
+
+        if (docSnap.exists) {
+            const data = docSnap.data();
+            const canciones = Array.isArray(data.canciones) ? data.canciones : [];
+            historialCache = canciones
+                .map(c => ({
+                    titulo: c.titulo,
+                    fecha: (c.fecha && typeof c.fecha.toDate === 'function') ? c.fecha.toDate() : new Date(0)
+                }))
+                .filter(c => c.titulo)
+                .sort((a, b) => b.fecha - a.fecha)
+                .slice(0, MAX_HISTORIAL);
+        } else {
+            historialCache = [];
+        }
+        console.log(`📚 Historial cargado: ${historialCache.length} canciones`);
+    } catch (e) {
+        console.warn('Error al cargar historial:', e);
+        historialCache = [];
+    }
+}
+
+async function guardarEnHistorial(titulo) {
+    const user = firebase.auth().currentUser;
+    if (!user || !titulo) return;
+
+    historialCache = historialCache.filter(c => c.titulo !== titulo);
+    historialCache.unshift({ titulo, fecha: new Date() });
+    if (historialCache.length > MAX_HISTORIAL) historialCache.length = MAX_HISTORIAL;
+
+    if (typeof window.__buildListenAgain === 'function') {
+        window.__buildListenAgain();
+    }
+
+    try {
+        const docRef = db.collection('historial_usuarios').doc(user.uid);
+        const docSnap = await docRef.get();
+
+        const nuevasCanciones = historialCache.map(c => ({
+            titulo: c.titulo,
+            fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
+        }));
+
+        if (docSnap.exists) {
+            await docRef.update({ canciones: nuevasCanciones });
+        } else {
+            await docRef.set({ canciones: nuevasCanciones });
+        }
+    } catch (e) {
+        console.warn('Error al guardar historial:', e);
+    }
+}
+
+window.__cargarHistorialUsuario = cargarHistorialUsuario;
+window.__guardarEnHistorial = guardarEnHistorial;
+window.__getHistorialCache = () => historialCache;
 
 /* ============================================================
    1. DATOS GLOBALES Y UTILIDADES
@@ -908,6 +985,12 @@ document.addEventListener('DOMContentLoaded', () => {
         await cargarDocsDeFirebase();
         if (firebase.auth().currentUser) {
             await cargarOyentesDeTodas();
+            if (typeof window.__cargarHistorialUsuario === 'function') {
+                await window.__cargarHistorialUsuario();
+                if (typeof window.__buildListenAgain === 'function') {
+                    window.__buildListenAgain();
+                }
+            }
         }
         if (typeof window.__applySearchVisibility === 'function') {
             window.__applySearchVisibility();
@@ -1330,7 +1413,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const audio = document.getElementById('audio-player');
         if (!audio || e.target !== audio) return;
 
-        // 1) Registrar oyente único SOLO si es nuevo (o pasaron 28 días).
         try {
             const activeItem = document.querySelector('.playlist-item.active');
             if (activeItem) {
@@ -1349,7 +1431,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.warn('Error registrando oyente en ended:', err);
         }
 
-        // 2) Aplicar modo de repetición.
         if (repeatMode === 'one') {
             e.stopImmediatePropagation();
             e.stopPropagation();
@@ -1544,8 +1625,6 @@ document.addEventListener('DOMContentLoaded', () => {
    ============================================================ */
 (function () {
     'use strict';
-    const HISTORY_KEY    = 'omega_history_v1';
-    const MAX_HISTORY    = 80;
     const CAROUSEL_LIMIT = 12;
     const COLLAB_SPLIT   = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
     function norm(str) {
@@ -1570,7 +1649,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return el ? el.textContent.trim() : '';
     }
     function getPlays(item) {
-        return contarOyentes(getItemTitle(item));
+        if (typeof contarOyentes === 'function') return contarOyentes(getItemTitle(item));
+        return 0;
     }
     function shuffle(arr) {
         const a = arr.slice();
@@ -1591,18 +1671,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return getAllItems().find(it => norm(getItemTitle(it)) === n) || null;
     }
     function clearNode(el) { while (el.firstChild) el.removeChild(el.firstChild); }
-    function readHistory() {
-        try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (_) { return []; }
-    }
-    function pushHistory(title) {
-        if (!title) return;
-        const n = norm(title);
-        if (!n) return;
-        let arr = readHistory().filter(x => norm(x) !== n);
-        arr.unshift(title);
-        if (arr.length > MAX_HISTORY) arr.length = MAX_HISTORY;
-        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch (_) {}
-    }
+
     function makeSongCard(item) {
         const title = getItemTitle(item);
         const cover = getItemCover(item);
@@ -1632,6 +1701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => item.click());
         return btn;
     }
+
     function buildArtists() {
         const sec = document.getElementById('sec-artists');
         const carousel = document.getElementById('carousel-artists');
@@ -1670,18 +1740,25 @@ document.addEventListener('DOMContentLoaded', () => {
             carousel.appendChild(btn);
         });
     }
+
     function buildListenAgain() {
         const sec = document.getElementById('sec-listen-again');
         const carousel = document.getElementById('carousel-listen-again');
         if (!sec || !carousel) return;
         clearNode(carousel);
-        const history = readHistory();
+
+        const historial = (typeof window.__getHistorialCache === 'function')
+            ? window.__getHistorialCache()
+            : [];
+
+        if (!historial.length) { sec.style.display = 'none'; return; }
+
         const seen = new Set();
         const items = [];
-        for (const title of history) {
-            const n = norm(title);
+        for (const entry of historial) {
+            const n = norm(entry.titulo);
             if (!n || seen.has(n)) continue;
-            const it = findItemByTitle(title);
+            const it = findItemByTitle(entry.titulo);
             if (!it) continue;
             seen.add(n);
             items.push(it);
@@ -1691,6 +1768,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sec.style.display = '';
         items.forEach(it => carousel.appendChild(makeSongCard(it)));
     }
+    window.__buildListenAgain = buildListenAgain;
+
     function buildMaybe() {
         const sec = document.getElementById('sec-maybe');
         const carousel = document.getElementById('carousel-maybe');
@@ -1706,6 +1785,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sec.style.display = '';
         picked.forEach(it => carousel.appendChild(makeSongCard(it)));
     }
+
     function buildTop() {
         const sec = document.getElementById('sec-top');
         const carousel = document.getElementById('carousel-top');
@@ -1717,6 +1797,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sec.style.display = '';
         picked.forEach(it => carousel.appendChild(makeSongCard(it)));
     }
+
     function buildAlbums() {
         const sec = document.getElementById('sec-albums');
         const carousel = document.getElementById('carousel-albums');
@@ -1764,6 +1845,7 @@ document.addEventListener('DOMContentLoaded', () => {
             carousel.appendChild(btn);
         });
     }
+
     function buildAll() {
         buildArtists();
         buildListenAgain();
@@ -1771,13 +1853,18 @@ document.addEventListener('DOMContentLoaded', () => {
         buildTop();
         buildAlbums();
     }
+
     function initHistoryTracking() {
         const audio = document.getElementById('audio-player');
         const pl    = document.getElementById('playlist');
         if (!audio || !pl) return;
         audio.addEventListener('play', () => {
             const active = pl.querySelector('.playlist-item.active');
-            if (active) pushHistory(getItemTitle(active));
+            if (!active) return;
+            const titulo = getItemTitle(active);
+            if (titulo && typeof window.__guardarEnHistorial === 'function') {
+                window.__guardarEnHistorial(titulo);
+            }
         });
         audio.addEventListener('ended', () => {
             setTimeout(() => {
@@ -1787,6 +1874,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 400);
         });
     }
+
     function boot() {
         let tries = 0;
         (function loop() {
@@ -1801,6 +1889,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(loop, 200);
         })();
     }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);
     } else { boot(); }
