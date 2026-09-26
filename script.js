@@ -2010,7 +2010,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   13. 🆕 CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
+   13. CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
    ============================================================ */
 (function () {
     'use strict';
