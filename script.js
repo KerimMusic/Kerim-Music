@@ -2084,3 +2084,167 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+
+/* ============================================================
+   14. INTEGRACIÓN CON "SUBIR MÚSICA"
+   Escucha las canciones subidas en historial_usuarios/{uid}/canciones
+   y las inyecta automáticamente en el reproductor.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const PLACEHOLDER_COVER = 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
+    const UPLOAD_FLAG = '1';
+
+    let unsubscribeUploads = null;
+
+    // ---------- helpers ----------
+    function localEscape(str) {
+        return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    function getPlaylistEl() {
+        return document.getElementById('playlist');
+    }
+
+    function removeUploadedItems() {
+        const pl = getPlaylistEl();
+        if (!pl) return;
+        pl.querySelectorAll('.playlist-item[data-uploaded="' + UPLOAD_FLAG + '"]')
+          .forEach(el => el.remove());
+    }
+
+    // ---------- crear item ----------
+    function buildUploadedItem(data) {
+        if (!data || !data.audioUrl || !data.titulo) return null;
+
+        const div = document.createElement('div');
+        div.className = 'playlist-item';
+        div.dataset.src = data.audioUrl;
+        div.dataset.uploaded = UPLOAD_FLAG;
+        if (data.album) div.dataset.album = data.album;
+        div.dataset.title = data.titulo;
+
+        const cover = data.imagenUrl || PLACEHOLDER_COVER;
+        const artista = data.artista || 'Artista';
+
+        div.innerHTML =
+            '<div class="thumbnail">' +
+                '<img src="' + localEscape(cover) + '" alt="Portada" loading="lazy" ' +
+                     'onerror="this.onerror=null;this.src=\'' + PLACEHOLDER_COVER + '\'">' +
+            '</div>' +
+            '<div class="item-info">' +
+                '<span class="item-title">' + localEscape(data.titulo) + '</span>' +
+                '<span class="item-subtitle">' + localEscape(artista) + ' · Subido</span>' +
+            '</div>';
+
+        return div;
+    }
+
+    // ---------- render ----------
+    function renderUploaded(canciones) {
+        const pl = getPlaylistEl();
+        if (!pl) return;
+
+        removeUploadedItems();
+
+        // Ordenar por fecha descendente (más nuevas primero)
+        const ordenadas = canciones.slice().sort((a, b) => {
+            const fa = a.fecha && typeof a.fecha.seconds === 'number' ? a.fecha.seconds : 0;
+            const fb = b.fecha && typeof b.fecha.seconds === 'number' ? b.fecha.seconds : 0;
+            return fb - fa;
+        });
+
+        const frag = document.createDocumentFragment();
+        ordenadas.forEach(c => {
+            const el = buildUploadedItem(c);
+            if (el) frag.appendChild(el);
+        });
+
+        // Insertar todas arriba de la lista respetando el orden
+        pl.insertBefore(frag, pl.firstChild);
+
+        console.log('🎵 Reproductor: ' + ordenadas.length + ' canción(es) subida(s) integradas.');
+
+        // Refrescar carruseles del home si están disponibles
+        if (typeof window.__buildListenAgain === 'function') {
+            try { window.__buildListenAgain(); } catch (_) {}
+        }
+        if (window.__showAllSongs && typeof window.__applySearchVisibility === 'function') {
+            try { window.__applySearchVisibility(); } catch (_) {}
+        }
+    }
+
+    // ---------- escucha ----------
+    function listenUploads(uid) {
+        if (unsubscribeUploads) {
+            unsubscribeUploads();
+            unsubscribeUploads = null;
+        }
+        removeUploadedItems();
+
+        const db = firebase.firestore();
+
+        // 📍 RUTA GLOBAL: cualquier usuario que suba, todos lo ven.
+        //    collectionGroup recorre cualquier "canciones" bajo
+        //    historial_usuarios/*/canciones
+        const ref = db.collectionGroup('canciones');
+
+        unsubscribeUploads = ref.onSnapshot(
+            (snap) => {
+                const lista = [];
+                snap.forEach(docSnap => {
+                    const d = docSnap.data() || {};
+                    if (!d.audioUrl || !d.titulo) return;
+                    if (d.origen && d.origen !== 'dropbox') return;
+                    lista.push({
+                        id: docSnap.id,
+                        titulo: d.titulo,
+                        artista: d.artista || '',
+                        audioUrl: d.audioUrl,
+                        imagenUrl: d.imagenUrl || '',
+                        album: d.album || '',
+                        fecha: d.fecha || null,
+                        uid: d.uid || ''
+                    });
+                });
+                renderUploaded(lista);
+            },
+            (err) => {
+                console.warn('⚠️ No se pudieron leer las canciones subidas:', err);
+            }
+        );
+    }
+
+    function stopListening() {
+        if (unsubscribeUploads) {
+            unsubscribeUploads();
+            unsubscribeUploads = null;
+        }
+        removeUploadedItems();
+    }
+
+    // ---------- init ----------
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.firestore || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+        const auth = firebase.auth();
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                listenUploads(user.uid);
+            } else {
+                stopListening();
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
