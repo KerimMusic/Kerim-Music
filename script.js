@@ -232,8 +232,13 @@ function buscarItemPorTitulo(titulo) {
 
 /* ============================================================
    0.3. HISTORIAL DE REPRODUCCIONES POR USUARIO (Firestore)
+   ------------------------------------------------------------
+   ✅ Ventana de "Volver a escuchar" = 28 días.
+   - Solo entra cuando la canción se reproduce completa.
+   - El contador de 28 días se reinicia al re-escuchar.
    ============================================================ */
 const MAX_HISTORIAL = 50;
+const DIAS_HISTORIAL = 28;   // ✅ Ventana de "Volver a escuchar" = 28 días
 
 let historialCache = [];
 
@@ -248,18 +253,22 @@ async function cargarHistorialUsuario() {
         if (docSnap.exists) {
             const data = docSnap.data();
             const canciones = Array.isArray(data.canciones) ? data.canciones : [];
+            const limite = Date.now() - DIAS_HISTORIAL * 24 * 60 * 60 * 1000;
+
             historialCache = canciones
                 .map(c => ({
                     titulo: c.titulo,
-                    fecha: (c.fecha && typeof c.fecha.toDate === 'function') ? c.fecha.toDate() : new Date(0)
+                    fecha: (c.fecha && typeof c.fecha.toDate === 'function')
+                        ? c.fecha.toDate()
+                        : new Date(0)
                 }))
-                .filter(c => c.titulo)
+                .filter(c => c.titulo && c.fecha.getTime() >= limite)
                 .sort((a, b) => b.fecha - a.fecha)
                 .slice(0, MAX_HISTORIAL);
         } else {
             historialCache = [];
         }
-        console.log(`📚 Historial cargado: ${historialCache.length} canciones`);
+        console.log(`📚 Historial cargado: ${historialCache.length} canciones (ventana 28 días)`);
     } catch (e) {
         console.warn('Error al cargar historial:', e);
         historialCache = [];
@@ -1741,6 +1750,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ✅ "VOLVER A ESCUCHAR" — ventana de 28 días */
     function buildListenAgain() {
         const sec = document.getElementById('sec-listen-again');
         const carousel = document.getElementById('carousel-listen-again');
@@ -1753,9 +1763,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!historial.length) { sec.style.display = 'none'; return; }
 
+        // Filtro de seguridad: ignora entradas mayores a 28 días
+        const DIAS_VENTANA = 28;
+        const limite = Date.now() - DIAS_VENTANA * 24 * 60 * 60 * 1000;
+
         const seen = new Set();
         const items = [];
         for (const entry of historial) {
+            if (!entry.fecha || entry.fecha.getTime() < limite) continue;
+
             const n = norm(entry.titulo);
             if (!n || seen.has(n)) continue;
             const it = findItemByTitle(entry.titulo);
@@ -1854,18 +1870,30 @@ document.addEventListener('DOMContentLoaded', () => {
         buildAlbums();
     }
 
+    /* ✅ HISTORIAL: solo guarda al terminar la canción completa */
     function initHistoryTracking() {
         const audio = document.getElementById('audio-player');
         const pl    = document.getElementById('playlist');
         if (!audio || !pl) return;
-        audio.addEventListener('play', () => {
+
+        // Solo registra en historial cuando la canción TERMINA COMPLETA.
+        // Esto reinicia el contador de 28 días cada vez que se re-escucha.
+        audio.addEventListener('ended', () => {
+            const duration  = audio.duration;
+            const played    = audio.currentTime;
+            const completed = !!duration && isFinite(duration) && played >= (duration - 1.5);
+            if (!completed) return;
+
             const active = pl.querySelector('.playlist-item.active');
             if (!active) return;
+
             const titulo = getItemTitle(active);
             if (titulo && typeof window.__guardarEnHistorial === 'function') {
                 window.__guardarEnHistorial(titulo);
             }
         });
+
+        // Refresco visual de los carruseles al terminar cualquier canción
         audio.addEventListener('ended', () => {
             setTimeout(() => {
                 buildListenAgain();
@@ -2328,12 +2356,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   16. 🆕 CERRAR SESIÓN Y ELIMINAR CUENTA
-   ------------------------------------------------------------
-   - "Cerrar Sesión": solo cierra la sesión actual (no borra datos).
-   - "Eliminar cuenta": borra TODOS los datos del usuario en
-     Firestore + elimina la cuenta de Firebase Auth, previa
-     confirmación explícita del usuario.
+   16. CERRAR SESIÓN Y ELIMINAR CUENTA
    ============================================================ */
 (function () {
     'use strict';
@@ -2341,9 +2364,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const MODAL_ID       = 'omega-delete-modal';
     const MODAL_ERR_ID   = 'omega-modal-error';
 
-    /* ---------------------------------------------------------
-       Inicialización: busca los enlaces del submenú existente
-       --------------------------------------------------------- */
     function init() {
         if (typeof firebase === 'undefined' || !firebase.auth) {
             setTimeout(init, 300);
@@ -2387,9 +2407,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    /* ---------------------------------------------------------
-       Modal de confirmación
-       --------------------------------------------------------- */
     function crearModalConfirmacion() {
         if (document.getElementById(MODAL_ID)) return;
 
@@ -2468,9 +2485,6 @@ document.addEventListener('DOMContentLoaded', () => {
         confirmBtn.addEventListener('click', onConfirm);
     }
 
-    /* ---------------------------------------------------------
-       Eliminación completa de datos + cuenta
-       --------------------------------------------------------- */
     async function eliminarCuentaYUsuario() {
         const user = firebase.auth().currentUser;
         if (!user) throw new Error('No hay sesión activa');
@@ -2478,12 +2492,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const uid = user.uid;
         const db  = firebase.firestore();
 
-        /* 1) Historial del usuario */
         try {
             await db.collection('historial_usuarios').doc(uid).delete();
         } catch (e) { console.warn('No se pudo borrar historial:', e); }
 
-        /* 2) Entradas como oyente en cada canción */
         try {
             const snap = await db.collection('oyentes_canciones').get();
             const batch = db.batch();
@@ -2501,7 +2513,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (ops > 0) await batch.commit();
         } catch (e) { console.warn('No se pudieron borrar oyentes:', e); }
 
-        /* 3) Canciones subidas (colección canciones_usuarios) */
         try {
             const snap = await db.collection('canciones_usuarios')
                                  .where('uid', '==', uid).get();
@@ -2512,7 +2523,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) { console.warn('No se pudieron borrar canciones_usuarios:', e); }
 
-        /* 4) Subcolecciones "canciones" (collectionGroup) */
         try {
             const snap = await db.collectionGroup('canciones').get();
             const batch = db.batch();
@@ -2527,13 +2537,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (ops > 0) await batch.commit();
         } catch (e) { console.warn('No se pudieron borrar subcolecciones:', e); }
 
-        /* 5) Finalmente, eliminar la cuenta de Firebase Auth */
         await user.delete();
     }
 
-    /* ---------------------------------------------------------
-       Arranque
-       --------------------------------------------------------- */
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
