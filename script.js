@@ -2031,11 +2031,9 @@ document.addEventListener('DOMContentLoaded', () => {
         db.collection('canciones_usuarios')
           .orderBy('fecha', 'desc')
           .onSnapshot((snap) => {
-            // 1. Eliminar las que ya inyectamos antes (evita duplicados)
             playlist.querySelectorAll('.playlist-item[data-user-upload="1"]')
                     .forEach(el => el.remove());
 
-            // 2. Inyectar las nuevas
             snap.forEach(doc => {
                 const d = doc.data();
                 if (!d.audioUrl || !d.titulo) return;
@@ -2050,7 +2048,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const cover   = d.imagenUrl || 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
                 const artista = d.artista || 'Artista';
 
-                // ✅ NUEVO: renderizar el álbum si existe
                 const albumHTML = d.album
                     ? `<span class="Album">${d.album}</span>`
                     : '';
@@ -2066,18 +2063,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 `;
 
-                // Insertar arriba de la lista
                 playlist.insertBefore(div, playlist.firstChild);
             });
 
             console.log(`✅ ${snap.size} canciones subidas cargadas`);
 
-            // Refrescar carruseles del home
             if (typeof window.__buildListenAgain === 'function') {
                 window.__buildListenAgain();
             }
 
-            // Si el usuario ya mostró todas, que se vean las nuevas
             if (window.__showAllSongs && typeof window.__applySearchVisibility === 'function') {
                 window.__applySearchVisibility();
             }
@@ -2095,8 +2089,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    14. INTEGRACIÓN CON "SUBIR MÚSICA"
-   Escucha las canciones subidas en historial_usuarios/{uid}/canciones
-   y las inyecta automáticamente en el reproductor.
    ============================================================ */
 (function () {
     'use strict';
@@ -2106,7 +2098,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let unsubscribeUploads = null;
 
-    // ---------- helpers ----------
     function localEscape(str) {
         return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -2124,7 +2115,6 @@ document.addEventListener('DOMContentLoaded', () => {
           .forEach(el => el.remove());
     }
 
-    // ---------- crear item ----------
     function buildUploadedItem(data) {
         if (!data || !data.audioUrl || !data.titulo) return null;
 
@@ -2138,7 +2128,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const cover = data.imagenUrl || PLACEHOLDER_COVER;
         const artista = data.artista || 'Artista';
 
-        // ✅ NUEVO: renderizar el álbum si existe
         const albumHTML = data.album
             ? '<span class="Album">' + localEscape(data.album) + '</span>'
             : '';
@@ -2157,14 +2146,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return div;
     }
 
-    // ---------- render ----------
     function renderUploaded(canciones) {
         const pl = getPlaylistEl();
         if (!pl) return;
 
         removeUploadedItems();
 
-        // Ordenar por fecha descendente (más nuevas primero)
         const ordenadas = canciones.slice().sort((a, b) => {
             const fa = a.fecha && typeof a.fecha.seconds === 'number' ? a.fecha.seconds : 0;
             const fb = b.fecha && typeof b.fecha.seconds === 'number' ? b.fecha.seconds : 0;
@@ -2177,12 +2164,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (el) frag.appendChild(el);
         });
 
-        // Insertar todas arriba de la lista respetando el orden
         pl.insertBefore(frag, pl.firstChild);
 
         console.log('🎵 Reproductor: ' + ordenadas.length + ' canción(es) subida(s) integradas.');
 
-        // Refrescar carruseles del home si están disponibles
         if (typeof window.__buildListenAgain === 'function') {
             try { window.__buildListenAgain(); } catch (_) {}
         }
@@ -2191,7 +2176,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ---------- escucha ----------
     function listenUploads(uid) {
         if (unsubscribeUploads) {
             unsubscribeUploads();
@@ -2201,9 +2185,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const db = firebase.firestore();
 
-        // 📍 RUTA GLOBAL: cualquier usuario que suba, todos lo ven.
-        //    collectionGroup recorre cualquier "canciones" bajo
-        //    historial_usuarios/*/canciones
         const ref = db.collectionGroup('canciones');
 
         unsubscribeUploads = ref.onSnapshot(
@@ -2240,7 +2221,6 @@ document.addEventListener('DOMContentLoaded', () => {
         removeUploadedItems();
     }
 
-    // ---------- init ----------
     function init() {
         if (typeof firebase === 'undefined' || !firebase.firestore || !firebase.auth) {
             setTimeout(init, 300);
@@ -2254,6 +2234,85 @@ document.addEventListener('DOMContentLoaded', () => {
                 stopListening();
             }
         });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
+/* ============================================================
+   15. 🎧 OYENTES AUTOMÁTICOS PARA CANCIONES NUEVAS
+   ------------------------------------------------------------
+   Detecta cualquier .playlist-item que se agregue dinámicamente
+   (Firestore: canciones_usuarios / collectionGroup 'canciones')
+   y le aplica EXACTAMENTE el mismo sistema de oyentes que ya
+   tienen las canciones fijas:
+     • Carga el conteo desde Firestore (oyentes_canciones/{titulo})
+     • Pinta el badge "👥 N oyentes" en el item
+     • Al terminar la canción, registrarOyente() lo actualiza
+   Se mantiene activo mientras el item exista en el DOM.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    function getTitle(item) {
+        return item.querySelector('.item-title')?.textContent.trim() || '';
+    }
+
+    async function initItemListeners(item) {
+        if (!item || item.dataset.oyentesReady === '1') return;
+
+        const titulo = getTitle(item);
+        if (!titulo) return;
+
+        item.dataset.oyentesReady = '1';
+
+        try {
+            await cargarOyentesCancion(titulo);
+            pintarReproducciones(item, contarOyentes(titulo));
+            console.log('🎧 Oyentes inicializados para canción nueva:', titulo);
+        } catch (e) {
+            console.warn('Error inicializando oyentes para:', titulo, e);
+            item.dataset.oyentesReady = '0';
+        }
+    }
+
+    function processItem(item) {
+        if (!item || item.nodeType !== 1) return;
+        if (!item.classList || !item.classList.contains('playlist-item')) return;
+
+        const titulo = getTitle(item);
+        if (!titulo) {
+            setTimeout(() => processItem(item), 120);
+            return;
+        }
+        initItemListeners(item);
+    }
+
+    function init() {
+        const playlist = document.getElementById('playlist');
+        if (!playlist) { setTimeout(init, 300); return; }
+
+        playlist.querySelectorAll('.playlist-item').forEach(processItem);
+
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach(m => {
+                m.addedNodes.forEach(node => {
+                    if (node.nodeType !== 1) return;
+                    if (node.classList && node.classList.contains('playlist-item')) {
+                        processItem(node);
+                    } else if (node.querySelectorAll) {
+                        node.querySelectorAll('.playlist-item').forEach(processItem);
+                    }
+                });
+            });
+        });
+
+        observer.observe(playlist, { childList: true, subtree: true });
+        console.log('👀 Observador de oyentes activo para canciones nuevas');
     }
 
     if (document.readyState === 'loading') {
