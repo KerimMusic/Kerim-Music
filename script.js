@@ -232,13 +232,8 @@ function buscarItemPorTitulo(titulo) {
 
 /* ============================================================
    0.3. HISTORIAL DE REPRODUCCIONES POR USUARIO (Firestore)
-   ------------------------------------------------------------
-   ✅ Ventana de "Volver a escuchar" = 28 días.
-   - Solo entra cuando la canción se reproduce completa.
-   - El contador de 28 días se reinicia al re-escuchar.
    ============================================================ */
 const MAX_HISTORIAL = 50;
-const DIAS_HISTORIAL = 28;   // ✅ Ventana de "Volver a escuchar" = 28 días
 
 let historialCache = [];
 
@@ -253,22 +248,18 @@ async function cargarHistorialUsuario() {
         if (docSnap.exists) {
             const data = docSnap.data();
             const canciones = Array.isArray(data.canciones) ? data.canciones : [];
-            const limite = Date.now() - DIAS_HISTORIAL * 24 * 60 * 60 * 1000;
-
             historialCache = canciones
                 .map(c => ({
                     titulo: c.titulo,
-                    fecha: (c.fecha && typeof c.fecha.toDate === 'function')
-                        ? c.fecha.toDate()
-                        : new Date(0)
+                    fecha: (c.fecha && typeof c.fecha.toDate === 'function') ? c.fecha.toDate() : new Date(0)
                 }))
-                .filter(c => c.titulo && c.fecha.getTime() >= limite)
+                .filter(c => c.titulo)
                 .sort((a, b) => b.fecha - a.fecha)
                 .slice(0, MAX_HISTORIAL);
         } else {
             historialCache = [];
         }
-        console.log(`📚 Historial cargado: ${historialCache.length} canciones (ventana 28 días)`);
+        console.log(`📚 Historial cargado: ${historialCache.length} canciones`);
     } catch (e) {
         console.warn('Error al cargar historial:', e);
         historialCache = [];
@@ -1631,6 +1622,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    8. PORTADA / CATEGORÍAS HOME
+   ------------------------------------------------------------
+   🆕 Se exponen __buildArtists y __buildAlbums para que las
+   secciones 13 y 14 puedan refrescarlas cuando llegue música
+   nueva desde Firestore.
    ============================================================ */
 (function () {
     'use strict';
@@ -1750,7 +1745,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    /* ✅ "VOLVER A ESCUCHAR" — ventana de 28 días */
     function buildListenAgain() {
         const sec = document.getElementById('sec-listen-again');
         const carousel = document.getElementById('carousel-listen-again');
@@ -1763,15 +1757,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!historial.length) { sec.style.display = 'none'; return; }
 
-        // Filtro de seguridad: ignora entradas mayores a 28 días
-        const DIAS_VENTANA = 28;
-        const limite = Date.now() - DIAS_VENTANA * 24 * 60 * 60 * 1000;
-
         const seen = new Set();
         const items = [];
         for (const entry of historial) {
-            if (!entry.fecha || entry.fecha.getTime() < limite) continue;
-
             const n = norm(entry.titulo);
             if (!n || seen.has(n)) continue;
             const it = findItemByTitle(entry.titulo);
@@ -1784,7 +1772,6 @@ document.addEventListener('DOMContentLoaded', () => {
         sec.style.display = '';
         items.forEach(it => carousel.appendChild(makeSongCard(it)));
     }
-    window.__buildListenAgain = buildListenAgain;
 
     function buildMaybe() {
         const sec = document.getElementById('sec-maybe');
@@ -1870,30 +1857,18 @@ document.addEventListener('DOMContentLoaded', () => {
         buildAlbums();
     }
 
-    /* ✅ HISTORIAL: solo guarda al terminar la canción completa */
     function initHistoryTracking() {
         const audio = document.getElementById('audio-player');
         const pl    = document.getElementById('playlist');
         if (!audio || !pl) return;
-
-        // Solo registra en historial cuando la canción TERMINA COMPLETA.
-        // Esto reinicia el contador de 28 días cada vez que se re-escucha.
-        audio.addEventListener('ended', () => {
-            const duration  = audio.duration;
-            const played    = audio.currentTime;
-            const completed = !!duration && isFinite(duration) && played >= (duration - 1.5);
-            if (!completed) return;
-
+        audio.addEventListener('play', () => {
             const active = pl.querySelector('.playlist-item.active');
             if (!active) return;
-
             const titulo = getItemTitle(active);
             if (titulo && typeof window.__guardarEnHistorial === 'function') {
                 window.__guardarEnHistorial(titulo);
             }
         });
-
-        // Refresco visual de los carruseles al terminar cualquier canción
         audio.addEventListener('ended', () => {
             setTimeout(() => {
                 buildListenAgain();
@@ -1917,6 +1892,11 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(loop, 200);
         })();
     }
+
+    /* 🆕 Exponer funciones para que otras secciones puedan refrescar */
+    window.__buildListenAgain = buildListenAgain;
+    window.__buildArtists     = buildArtists;
+    window.__buildAlbums      = buildAlbums;
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);
@@ -2039,6 +2019,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    13. CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
+   ------------------------------------------------------------
+   🆕 Se refrescan también Artistas y Álbumes al detectar
+   cambios, para que la música nueva aparezca en el home.
    ============================================================ */
 (function () {
     'use strict';
@@ -2108,6 +2091,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof window.__buildListenAgain === 'function') {
                 window.__buildListenAgain();
             }
+            // 🆕 Refrescar Artistas y Álbumes para incluir lo nuevo
+            if (typeof window.__buildArtists === 'function') {
+                try { window.__buildArtists(); } catch (_) {}
+            }
+            if (typeof window.__buildAlbums === 'function') {
+                try { window.__buildAlbums(); } catch (_) {}
+            }
 
             if (typeof window.__applySearchVisibility === 'function') {
                 window.__applySearchVisibility();
@@ -2126,6 +2116,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    14. INTEGRACIÓN CON "SUBIR MÚSICA"
+   ------------------------------------------------------------
+   🆕 Se refrescan también Artistas y Álbumes al detectar
+   cambios, para que la música nueva aparezca en el home.
    ============================================================ */
 (function () {
     'use strict';
@@ -2212,6 +2205,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (typeof window.__buildListenAgain === 'function') {
             try { window.__buildListenAgain(); } catch (_) {}
+        }
+        // 🆕 Refrescar Artistas y Álbumes para incluir lo nuevo
+        if (typeof window.__buildArtists === 'function') {
+            try { window.__buildArtists(); } catch (_) {}
+        }
+        if (typeof window.__buildAlbums === 'function') {
+            try { window.__buildAlbums(); } catch (_) {}
         }
 
         if (typeof window.__applySearchVisibility === 'function') {
@@ -2346,198 +2346,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         observer.observe(playlist, { childList: true, subtree: true });
         console.log('👀 Observador de oyentes activo para canciones nuevas');
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-})();
-
-/* ============================================================
-   16. CERRAR SESIÓN Y ELIMINAR CUENTA
-   ============================================================ */
-(function () {
-    'use strict';
-
-    const MODAL_ID       = 'omega-delete-modal';
-    const MODAL_ERR_ID   = 'omega-modal-error';
-
-    function init() {
-        if (typeof firebase === 'undefined' || !firebase.auth) {
-            setTimeout(init, 300);
-            return;
-        }
-
-        const links = document.querySelectorAll('.submenu-list .submenu-link');
-        let logoutLink = null;
-        let deleteLink = null;
-
-        links.forEach(link => {
-            const text = (link.textContent || '').trim().toLowerCase();
-            if (text.includes('cerrar') && text.includes('sesi')) {
-                logoutLink = link;
-            } else if (text.includes('eliminar') && text.includes('cuenta')) {
-                deleteLink = link;
-            }
-        });
-
-        if (logoutLink) {
-            logoutLink.addEventListener('click', async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
-                try {
-                    await firebase.auth().signOut();
-                    console.log('👋 Sesión cerrada');
-                } catch (err) {
-                    console.error('Error al cerrar sesión:', err);
-                }
-            });
-        }
-
-        if (deleteLink) {
-            deleteLink.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
-                mostrarConfirmacionEliminar();
-            });
-        }
-    }
-
-    function crearModalConfirmacion() {
-        if (document.getElementById(MODAL_ID)) return;
-
-        const modal = document.createElement('div');
-        modal.id = MODAL_ID;
-        modal.setAttribute('aria-hidden', 'true');
-        modal.innerHTML = `
-            <div class="omega-modal-backdrop"></div>
-            <div class="omega-modal-box" role="dialog" aria-modal="true" aria-labelledby="omega-modal-title">
-                <h3 id="omega-modal-title" class="omega-modal-title">Eliminar cuenta</h3>
-                <p class="omega-modal-text">
-                    ¿Estás seguro de que deseas eliminar tu cuenta?
-                    Esta acción eliminará permanentemente todos tus datos
-                    y no se puede deshacer.
-                </p>
-                <p class="omega-modal-error" id="${MODAL_ERR_ID}"></p>
-                <div class="omega-modal-actions">
-                    <button type="button" class="omega-modal-btn omega-modal-btn-cancel" id="omega-modal-cancel">Cancelar</button>
-                    <button type="button" class="omega-modal-btn omega-modal-btn-confirm" id="omega-modal-confirm">Eliminar</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-    }
-
-    function mostrarConfirmacionEliminar() {
-        crearModalConfirmacion();
-
-        const modal      = document.getElementById(MODAL_ID);
-        const errEl      = document.getElementById(MODAL_ERR_ID);
-        const cancelBtn  = document.getElementById('omega-modal-cancel');
-        const confirmBtn = document.getElementById('omega-modal-confirm');
-
-        if (errEl) errEl.textContent = '';
-        modal.classList.add('visible');
-        modal.setAttribute('aria-hidden', 'false');
-
-        const cleanup = () => {
-            modal.classList.remove('visible');
-            modal.setAttribute('aria-hidden', 'true');
-            cancelBtn.removeEventListener('click', onCancel);
-            confirmBtn.removeEventListener('click', onConfirm);
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Eliminar';
-        };
-
-        function onCancel() {
-            if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
-            cleanup();
-        }
-
-        async function onConfirm() {
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = 'Eliminando…';
-            if (errEl) errEl.textContent = '';
-
-            try {
-                await eliminarCuentaYUsuario();
-                cleanup();
-                console.log('✅ Cuenta eliminada correctamente');
-            } catch (err) {
-                console.error('Error al eliminar cuenta:', err);
-                let msg = 'No se pudo eliminar la cuenta. Intenta de nuevo.';
-                if (err && err.code === 'auth/requires-recent-login') {
-                    msg = 'Por seguridad, cierra sesión, vuelve a entrar y prueba otra vez.';
-                } else if (err && err.code === 'auth/network-request-failed') {
-                    msg = 'Sin conexión. Revisa tu internet.';
-                }
-                if (errEl) errEl.textContent = msg;
-                confirmBtn.disabled = false;
-                confirmBtn.textContent = 'Eliminar';
-            }
-        }
-
-        cancelBtn.addEventListener('click', onCancel);
-        confirmBtn.addEventListener('click', onConfirm);
-    }
-
-    async function eliminarCuentaYUsuario() {
-        const user = firebase.auth().currentUser;
-        if (!user) throw new Error('No hay sesión activa');
-
-        const uid = user.uid;
-        const db  = firebase.firestore();
-
-        try {
-            await db.collection('historial_usuarios').doc(uid).delete();
-        } catch (e) { console.warn('No se pudo borrar historial:', e); }
-
-        try {
-            const snap = await db.collection('oyentes_canciones').get();
-            const batch = db.batch();
-            let ops = 0;
-            snap.forEach(docSnap => {
-                const data = docSnap.data() || {};
-                const oyentes = data.oyentes || {};
-                if (oyentes[uid]) {
-                    batch.update(docSnap.ref, {
-                        [`oyentes.${uid}`]: firebase.firestore.FieldValue.delete()
-                    });
-                    ops++;
-                }
-            });
-            if (ops > 0) await batch.commit();
-        } catch (e) { console.warn('No se pudieron borrar oyentes:', e); }
-
-        try {
-            const snap = await db.collection('canciones_usuarios')
-                                 .where('uid', '==', uid).get();
-            if (!snap.empty) {
-                const batch = db.batch();
-                snap.forEach(d => batch.delete(d.ref));
-                await batch.commit();
-            }
-        } catch (e) { console.warn('No se pudieron borrar canciones_usuarios:', e); }
-
-        try {
-            const snap = await db.collectionGroup('canciones').get();
-            const batch = db.batch();
-            let ops = 0;
-            snap.forEach(docSnap => {
-                const d = docSnap.data() || {};
-                if (d.uid === uid) {
-                    batch.delete(docSnap.ref);
-                    ops++;
-                }
-            });
-            if (ops > 0) await batch.commit();
-        } catch (e) { console.warn('No se pudieron borrar subcolecciones:', e); }
-
-        await user.delete();
     }
 
     if (document.readyState === 'loading') {
