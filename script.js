@@ -2044,9 +2044,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 div.className = 'playlist-item';
                 div.dataset.src = d.audioUrl;
                 div.dataset.userUpload = '1';
+                div.dataset.title = d.titulo;
+                if (d.album) div.dataset.album = d.album;
 
                 const cover   = d.imagenUrl || 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
                 const artista = d.artista || 'Artista';
+
+                // ✅ NUEVO: renderizar el álbum si existe
+                const albumHTML = d.album
+                    ? `<span class="Album">${d.album}</span>`
+                    : '';
 
                 div.innerHTML = `
                     <div class="thumbnail">
@@ -2055,6 +2062,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="item-info">
                         <span class="item-title">${d.titulo}</span>
                         <span class="item-subtitle">${artista} · Subido</span>
+                        ${albumHTML}
                     </div>
                 `;
 
@@ -2130,6 +2138,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const cover = data.imagenUrl || PLACEHOLDER_COVER;
         const artista = data.artista || 'Artista';
 
+        // ✅ NUEVO: renderizar el álbum si existe
+        const albumHTML = data.album
+            ? '<span class="Album">' + localEscape(data.album) + '</span>'
+            : '';
+
         div.innerHTML =
             '<div class="thumbnail">' +
                 '<img src="' + localEscape(cover) + '" alt="Portada" loading="lazy" ' +
@@ -2138,6 +2151,7 @@ document.addEventListener('DOMContentLoaded', () => {
             '<div class="item-info">' +
                 '<span class="item-title">' + localEscape(data.titulo) + '</span>' +
                 '<span class="item-subtitle">' + localEscape(artista) + ' · Subido</span>' +
+                albumHTML +
             '</div>';
 
         return div;
