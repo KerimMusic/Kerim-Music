@@ -1721,7 +1721,7 @@ button:active {
 .av-play-all:active { transform: scale(0.96); opacity: 0.9; }
 
 /* ============================================================
-   🆕 BOTÓN "MOSTRAR TODAS LAS CANCIONES"
+   BOTÓN "MOSTRAR TODAS LAS CANCIONES"
    ============================================================ */
 .home-all-header {
     display: flex;
@@ -1769,7 +1769,7 @@ button:active {
 .show-all-btn[hidden] { display: none; }
 
 /* ============================================================
-   🆕 PANTALLA OBLIGATORIA DE LOGIN CON GOOGLE
+   PANTALLA OBLIGATORIA DE LOGIN CON GOOGLE
    ============================================================ */
 .auth-gate {
     position: fixed;
@@ -1879,7 +1879,7 @@ button:active {
 }
 
 /* ============================================================
-   🆕 MODAL DE CONFIRMACIÓN - ELIMINAR CUENTA
+   MODAL DE CONFIRMACIÓN - ELIMINAR CUENTA
    ============================================================ */
 #omega-delete-modal {
     position: fixed;
@@ -1992,4 +1992,189 @@ button:active {
     opacity: 0.6;
     cursor: wait;
     box-shadow: none;
+}
+
+/* ============================================================
+   BUSCADOR TIPO SPOTIFY - RESULTADOS
+   ============================================================ */
+.search-results {
+    margin: 0 -20px;
+    padding: 6px 0 20px;
+    animation: searchFadeIn 0.22s ease;
+}
+
+@keyframes searchFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.search-section {
+    padding: 0 20px;
+    margin-bottom: 20px;
+}
+
+.search-section-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: #ffffff;
+    margin: 6px 0 10px;
+    letter-spacing: 0.2px;
+}
+
+/* --- Filas de canción --- */
+.search-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 6px 4px;
+    margin-bottom: 4px;
+    border-radius: 8px;
+    color: #ffffff;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.search-row:active { background-color: #1a1a1a; }
+
+.search-row-thumb {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: #1a1a1a;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.search-row-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.search-row-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.search-row-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.search-row-sub {
+    font-size: 12px;
+    color: #b3b3b3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.search-row-play {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ff2a2a;
+    font-size: 11px;
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+
+/* --- Cuadrícula artistas/álbumes --- */
+.search-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.search-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    background: none;
+    border: none;
+    padding: 0;
+    color: #ffffff;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.15s ease;
+}
+.search-card:active { transform: scale(0.96); }
+
+.search-card-thumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #1a1a1a;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+    margin-bottom: 8px;
+}
+.search-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.search-card-thumb--round {
+    border-radius: 50%;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6),
+                0 0 0 2px rgba(255, 42, 42, 0.30);
+}
+
+.search-card--artist { align-items: center; text-align: center; }
+.search-card--artist .search-card-title,
+.search-card--artist .search-card-sub { text-align: center; width: 100%; }
+
+.search-card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+.search-card-sub {
+    font-size: 11px;
+    color: #b3b3b3;
+    line-height: 1.25;
+    margin-top: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+/* --- Estado vacío --- */
+.search-empty {
+    text-align: center;
+    padding: 40px 20px;
+}
+.search-empty-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 6px;
+}
+.search-empty-sub {
+    font-size: 13px;
+    color: #999999;
+    line-height: 1.4;
 }
