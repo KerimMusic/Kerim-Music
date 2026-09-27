@@ -813,6 +813,34 @@
             </div>
         </div>
 
+        <!-- ==================== VISTA DE PLAYLIST "TU PLAYLIST" ==================== -->
+        <div class="playlist-view" id="playlist-view" aria-hidden="true">
+            <div class="pv-header">
+                <button class="pv-back" id="pv-back" type="button" aria-label="Volver">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                         stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"
+                         stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                </button>
+                <h1 class="pv-title" id="pv-title">Tu Playlist</h1>
+            </div>
+
+            <div class="pv-scroll" id="pv-scroll">
+                <div class="pv-cover-wrap">
+                    <img class="pv-cover" id="pv-cover-img" alt="Portada de la playlist" loading="lazy">
+                    <span class="pv-count" id="pv-count">0 canciones</span>
+                </div>
+                <div class="pv-list" id="pv-list"></div>
+            </div>
+
+            <div class="pv-footer">
+                <button class="pv-play-all" id="pv-play-all" type="button">
+                    Escuchar esta playlist
+                </button>
+            </div>
+        </div>
+
     </div>
 
     <audio id="audio-player" preload="metadata"></audio>
