@@ -308,69 +308,71 @@ window.__guardarEnHistorial = guardarEnHistorial;
 window.__getHistorialCache = () => historialCache;
 
 /* ============================================================
-   0.4. SISTEMA DE PLAYLISTS "TU PLAYLIST" (10 canciones c/u)
+   0.4. SISTEMA DE PLAYLISTS "TU PLAYLIST"
+        — Derivado del historial REAL del usuario en Firebase
+        — Solo canciones escuchadas COMPLETAMENTE
+        — Se guarda dentro de historial_usuarios/{uid}
+        — Chunks de 10 canciones (playlists anteriores se conservan)
    ============================================================ */
 const MAX_CANCIONES_POR_PLAYLIST = 10;
-let playlistsCache = [];
+const MAX_COMPLETADAS = 300; // hasta 30 playlists
+
+// Array de canciones completadas: [{ titulo, fecha }]
+// Orden: del más antiguo (índice 0) al más reciente (último)
+let completadasCache = [];
 
 async function cargarPlaylistsUsuario() {
     const user = firebase.auth().currentUser;
-    if (!user) { playlistsCache = []; return; }
+    if (!user) { completadasCache = []; return; }
 
     try {
-        const docRef = db.collection('playlists_usuarios').doc(user.uid);
+        const docRef = db.collection('historial_usuarios').doc(user.uid);
         const docSnap = await docRef.get();
 
         if (docSnap.exists) {
             const data = docSnap.data();
-            const pls = Array.isArray(data.playlists) ? data.playlists : [];
-            playlistsCache = pls.map(pl => ({
-                id: pl.id || ('pl_' + Math.random().toString(36).slice(2)),
-                nombre: pl.nombre || 'Tu Playlist',
-                fecha: (pl.fecha && typeof pl.fecha.toDate === 'function')
-                    ? pl.fecha.toDate() : new Date(0),
-                canciones: Array.isArray(pl.canciones)
-                    ? pl.canciones.map(c => ({
-                        titulo: c.titulo || '',
-                        fecha: (c.fecha && typeof c.fecha.toDate === 'function')
-                            ? c.fecha.toDate() : new Date(0)
-                      })).filter(c => c.titulo)
-                    : []
-            })).filter(pl => pl.canciones.length > 0);
+            const completadas = Array.isArray(data.canciones_completadas)
+                ? data.canciones_completadas : [];
+            completadasCache = completadas
+                .map(c => ({
+                    titulo: c.titulo || '',
+                    fecha: (c.fecha && typeof c.fecha.toDate === 'function')
+                        ? c.fecha.toDate() : new Date(0)
+                }))
+                .filter(c => c.titulo)
+                .slice(-MAX_COMPLETADAS);
         } else {
-            playlistsCache = [];
+            completadasCache = [];
         }
-        console.log(`📼 Playlists cargadas: ${playlistsCache.length}`);
+        console.log(`📼 Canciones completadas cargadas del historial: ${completadasCache.length}`);
     } catch (e) {
-        console.warn('Error al cargar playlists:', e);
-        playlistsCache = [];
+        console.warn('Error al cargar canciones completadas:', e);
+        completadasCache = [];
     }
 }
 
-async function guardarPlaylistsEnFirestore() {
+async function guardarCompletadasEnHistorial() {
     const user = firebase.auth().currentUser;
     if (!user) return;
 
     try {
-        const docRef = db.collection('playlists_usuarios').doc(user.uid);
+        const docRef = db.collection('historial_usuarios').doc(user.uid);
         const docSnap = await docRef.get();
 
         const dataToSave = {
-            playlists: playlistsCache.map(pl => ({
-                id: pl.id,
-                nombre: pl.nombre,
-                fecha: firebase.firestore.Timestamp.fromDate(pl.fecha),
-                canciones: pl.canciones.map(c => ({
-                    titulo: c.titulo,
-                    fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
-                }))
+            canciones_completadas: completadasCache.map(c => ({
+                titulo: c.titulo,
+                fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
             }))
         };
 
-        if (docSnap.exists) await docRef.update(dataToSave);
-        else                await docRef.set(dataToSave);
+        if (docSnap.exists) {
+            await docRef.update(dataToSave);
+        } else {
+            await docRef.set(dataToSave);
+        }
     } catch (e) {
-        console.warn('Error al guardar playlists:', e);
+        console.warn('Error al guardar canciones completadas en historial:', e);
     }
 }
 
@@ -378,33 +380,53 @@ async function guardarEnPlaylist(titulo) {
     const user = firebase.auth().currentUser;
     if (!user || !titulo) return;
 
-    playlistsCache.forEach(pl => {
-        pl.canciones = pl.canciones.filter(c => c.titulo !== titulo);
-    });
-    playlistsCache = playlistsCache.filter(pl => pl.canciones.length > 0);
+    // Evitar duplicado: si ya existe, se quita y se reinsertará al final
+    completadasCache = completadasCache.filter(c => c.titulo !== titulo);
 
-    let ultima = playlistsCache[playlistsCache.length - 1];
-    if (!ultima || ultima.canciones.length >= MAX_CANCIONES_POR_PLAYLIST) {
-        ultima = {
-            id: 'pl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-            nombre: 'Tu Playlist #' + (playlistsCache.length + 1),
-            fecha: new Date(),
-            canciones: []
-        };
-        playlistsCache.push(ultima);
+    // Añadir al FINAL (para no reordenar playlists anteriores)
+    completadasCache.push({ titulo, fecha: new Date() });
+
+    // Límite máximo
+    if (completadasCache.length > MAX_COMPLETADAS) {
+        completadasCache = completadasCache.slice(-MAX_COMPLETADAS);
     }
 
-    ultima.canciones.push({ titulo, fecha: new Date() });
-    await guardarPlaylistsEnFirestore();
+    await guardarCompletadasEnHistorial();
 
     if (typeof window.__buildListenAgain === 'function') {
         window.__buildListenAgain();
     }
 }
 
+/**
+ * Calcula las playlists a partir del array de canciones completadas.
+ * Cada playlist = chunk de 10 canciones.
+ * Como las nuevas se añaden al FINAL, los chunks anteriores
+ * NO cambian (las playlists anteriores se conservan intactas).
+ */
+function computePlaylistsFromCompletadas() {
+    const playlists = [];
+    const total = completadasCache.length;
+
+    for (let i = 0; i < total; i += MAX_CANCIONES_POR_PLAYLIST) {
+        const chunk = completadasCache.slice(i, i + MAX_CANCIONES_POR_PLAYLIST);
+        if (!chunk.length) continue;
+
+        const idx = Math.floor(i / MAX_CANCIONES_POR_PLAYLIST) + 1;
+        playlists.push({
+            id: 'pl_' + idx,
+            nombre: 'Tu Playlist #' + idx,
+            fecha: chunk[0].fecha,
+            canciones: chunk.slice()
+        });
+    }
+
+    return playlists;
+}
+
 window.__cargarPlaylistsUsuario = cargarPlaylistsUsuario;
 window.__guardarEnPlaylist     = guardarEnPlaylist;
-window.__getPlaylistsCache     = () => playlistsCache;
+window.__getPlaylistsCache     = computePlaylistsFromCompletadas;
 
 /* ============================================================
    1. DATOS GLOBALES Y UTILIDADES
