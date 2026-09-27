@@ -784,7 +784,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (submenuOverlay)  submenuOverlay.addEventListener('click', closeSubmenu);
 
     document.querySelectorAll('.submenu-link').forEach(link => {
-        link.addEventListener('click', closeSubmenu);
+        link.addEventListener('click', (e) => {
+            // No cerrar si es el link de cerrar sesión (lo maneja su propio módulo)
+            if (link.id === 'logout-link') return;
+            closeSubmenu();
+        });
     });
 
     document.addEventListener('keydown', (e) => {
@@ -1305,14 +1309,10 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && profileEl.classList.contains('visible')) closeProfile();
         });
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                const q = normalizeStr(e.target.value);
-                if (!q) return;
-                const artists = getAllArtistsMap();
-                if (artists.has(q)) openProfile(artists.get(q));
-            });
-        }
+        // (Desactivado) Antes abría el perfil automáticamente al escribir el nombre exacto.
+        // Ahora el buscador tipo Spotify muestra al artista como resultado y el usuario
+        // decide si entra a su perfil. Esto evita que la vista de resultados se cierre sola.
+
         window.__openArtistProfile = openProfile;
     }
     if (document.readyState === 'loading') {
@@ -1622,10 +1622,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    8. PORTADA / CATEGORÍAS HOME
-   ------------------------------------------------------------
-   🆕 Se exponen __buildArtists y __buildAlbums para que las
-   secciones 13 y 14 puedan refrescarlas cuando llegue música
-   nueva desde Firestore.
    ============================================================ */
 (function () {
     'use strict';
@@ -1893,7 +1889,6 @@ document.addEventListener('DOMContentLoaded', () => {
         })();
     }
 
-    /* 🆕 Exponer funciones para que otras secciones puedan refrescar */
     window.__buildListenAgain = buildListenAgain;
     window.__buildArtists     = buildArtists;
     window.__buildAlbums      = buildAlbums;
@@ -2019,9 +2014,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    13. CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
-   ------------------------------------------------------------
-   🆕 Se refrescan también Artistas y Álbumes al detectar
-   cambios, para que la música nueva aparezca en el home.
    ============================================================ */
 (function () {
     'use strict';
@@ -2091,7 +2083,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (typeof window.__buildListenAgain === 'function') {
                 window.__buildListenAgain();
             }
-            // 🆕 Refrescar Artistas y Álbumes para incluir lo nuevo
             if (typeof window.__buildArtists === 'function') {
                 try { window.__buildArtists(); } catch (_) {}
             }
@@ -2116,9 +2107,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    14. INTEGRACIÓN CON "SUBIR MÚSICA"
-   ------------------------------------------------------------
-   🆕 Se refrescan también Artistas y Álbumes al detectar
-   cambios, para que la música nueva aparezca en el home.
    ============================================================ */
 (function () {
     'use strict';
@@ -2206,7 +2194,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (typeof window.__buildListenAgain === 'function') {
             try { window.__buildListenAgain(); } catch (_) {}
         }
-        // 🆕 Refrescar Artistas y Álbumes para incluir lo nuevo
         if (typeof window.__buildArtists === 'function') {
             try { window.__buildArtists(); } catch (_) {}
         }
@@ -2286,7 +2273,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   15. 🎧 OYENTES AUTOMÁTICOS PARA CANCIONES NUEVAS
+   15. OYENTES AUTOMÁTICOS PARA CANCIONES NUEVAS
    ============================================================ */
 (function () {
     'use strict';
@@ -2346,6 +2333,431 @@ document.addEventListener('DOMContentLoaded', () => {
 
         observer.observe(playlist, { childList: true, subtree: true });
         console.log('👀 Observador de oyentes activo para canciones nuevas');
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
+/* ============================================================
+   16. CERRAR SESIÓN (Google Auth)
+   ============================================================ */
+(function () {
+    'use strict';
+
+    function init() {
+        const logoutLink = document.getElementById('logout-link');
+        if (!logoutLink) return;
+        if (logoutLink.dataset.logoutReady === '1') return;
+        logoutLink.dataset.logoutReady = '1';
+
+        logoutLink.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (logoutLink.dataset.loggingOut === '1') return;
+            logoutLink.dataset.loggingOut = '1';
+
+            const originalText = logoutLink.textContent;
+            logoutLink.textContent = 'Cerrando sesión…';
+            logoutLink.style.pointerEvents = 'none';
+            logoutLink.style.opacity = '0.6';
+
+            try {
+                if (navigator.vibrate) {
+                    try { navigator.vibrate(12); } catch (_) {}
+                }
+
+                if (typeof firebase === 'undefined' || !firebase.auth) {
+                    throw new Error('Firebase no disponible');
+                }
+
+                await firebase.auth().signOut();
+                console.log('✅ Sesión cerrada correctamente');
+
+                // Cerrar submenú
+                const submenu = document.getElementById('submenu');
+                const overlay = document.getElementById('submenu-overlay');
+                if (submenu) submenu.classList.remove('visible');
+                if (overlay) overlay.classList.remove('visible');
+
+                // Resetear buscador
+                const searchInput = document.getElementById('search-input');
+                const searchContainer = document.getElementById('search-container');
+                if (searchInput) searchInput.value = '';
+                if (searchContainer) searchContainer.classList.remove('visible');
+
+                // onAuthStateChanged se encarga de mostrar el auth-gate
+            } catch (err) {
+                console.error('Error al cerrar sesión:', err);
+                alert('No se pudo cerrar sesión. Intenta de nuevo.');
+            } finally {
+                logoutLink.textContent = originalText;
+                logoutLink.style.pointerEvents = '';
+                logoutLink.style.opacity = '';
+                delete logoutLink.dataset.loggingOut;
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
+/* ============================================================
+   17. BUSCADOR TIPO SPOTIFY
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
+    function norm(s) {
+        return String(s || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function getItemTitle(item) {
+        return item.querySelector('.item-title')?.textContent.trim() || '';
+    }
+    function getItemSubtitle(item) {
+        return item.querySelector('.item-subtitle')?.textContent.trim() || '';
+    }
+    function getItemArtists(item) {
+        const sub = getItemSubtitle(item);
+        const idx = sub.indexOf('·');
+        const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+        if (!namePart) return [];
+        const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
+        return parts.length ? parts : [namePart];
+    }
+    function getItemAlbum(item) {
+        const el = item.querySelector('.Album');
+        return el ? el.textContent.trim() : '';
+    }
+    function getItemCover(item) {
+        return item.querySelector('.thumbnail img')?.src || '';
+    }
+
+    let searchResultsEl  = null;
+    let searchInputEl    = null;
+    let searchContainerEl = null;
+    let playlistEl       = null;
+    let debounceTimer    = null;
+
+    function ensureResultsContainer() {
+        if (searchResultsEl && searchResultsEl.isConnected) return searchResultsEl;
+        if (!playlistEl) return null;
+        searchResultsEl = document.getElementById('search-results');
+        if (!searchResultsEl) {
+            searchResultsEl = document.createElement('div');
+            searchResultsEl.id = 'search-results';
+            searchResultsEl.className = 'search-results';
+            searchResultsEl.style.display = 'none';
+            playlistEl.appendChild(searchResultsEl);
+        }
+        return searchResultsEl;
+    }
+
+    function hideAllItems() {
+        if (!playlistEl) return;
+        const homeView = document.getElementById('home-view');
+        if (homeView) homeView.style.display = 'none';
+        playlistEl.querySelectorAll('.playlist-item').forEach(it => {
+            it.style.display = 'none';
+        });
+    }
+
+    function restoreNormalView() {
+        if (!playlistEl) return;
+        const homeView = document.getElementById('home-view');
+        if (homeView) homeView.style.display = '';
+        const showAll = window.__showAllSongs === true;
+        playlistEl.querySelectorAll('.playlist-item').forEach(it => {
+            it.style.display = showAll ? 'flex' : 'none';
+        });
+    }
+
+    function clearResults() {
+        if (!searchResultsEl) return;
+        searchResultsEl.innerHTML = '';
+        searchResultsEl.style.display = 'none';
+    }
+
+    function buildSongRow(item) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'search-row';
+
+        const thumb = document.createElement('div');
+        thumb.className = 'search-row-thumb';
+        const cover = getItemCover(item);
+        if (cover) {
+            const img = document.createElement('img');
+            img.src = cover;
+            img.alt = getItemTitle(item);
+            img.loading = 'lazy';
+            thumb.appendChild(img);
+        }
+        btn.appendChild(thumb);
+
+        const info = document.createElement('div');
+        info.className = 'search-row-info';
+        const title = document.createElement('span');
+        title.className = 'search-row-title';
+        title.textContent = getItemTitle(item);
+        info.appendChild(title);
+        const sub = document.createElement('span');
+        sub.className = 'search-row-sub';
+        sub.textContent = getItemSubtitle(item);
+        info.appendChild(sub);
+        btn.appendChild(info);
+
+        const play = document.createElement('span');
+        play.className = 'search-row-play';
+        play.textContent = '▶';
+        play.setAttribute('aria-hidden', 'true');
+        btn.appendChild(play);
+
+        btn.addEventListener('click', () => closeSearchAndPlay(item));
+        return btn;
+    }
+
+    function buildArtistCard(artist) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'search-card search-card--artist';
+
+        const thumb = document.createElement('div');
+        thumb.className = 'search-card-thumb search-card-thumb--round';
+        if (artist.cover) {
+            const img = document.createElement('img');
+            img.src = artist.cover;
+            img.alt = artist.name;
+            img.loading = 'lazy';
+            thumb.appendChild(img);
+        }
+        btn.appendChild(thumb);
+
+        const name = document.createElement('span');
+        name.className = 'search-card-title';
+        name.textContent = artist.name;
+        btn.appendChild(name);
+
+        const label = document.createElement('span');
+        label.className = 'search-card-sub';
+        label.textContent = 'Artista';
+        btn.appendChild(label);
+
+        btn.addEventListener('click', () => {
+            closeSearch();
+            if (typeof window.__openArtistProfile === 'function') {
+                window.__openArtistProfile(artist.name);
+            }
+        });
+        return btn;
+    }
+
+    function buildAlbumCard(album) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'search-card';
+
+        const thumb = document.createElement('div');
+        thumb.className = 'search-card-thumb';
+        if (album.cover) {
+            const img = document.createElement('img');
+            img.src = album.cover;
+            img.alt = album.name;
+            img.loading = 'lazy';
+            thumb.appendChild(img);
+        }
+        btn.appendChild(thumb);
+
+        const name = document.createElement('span');
+        name.className = 'search-card-title';
+        name.textContent = album.name;
+        btn.appendChild(name);
+
+        if (album.artist) {
+            const sub = document.createElement('span');
+            sub.className = 'search-card-sub';
+            sub.textContent = album.artist;
+            btn.appendChild(sub);
+        }
+
+        btn.addEventListener('click', () => {
+            closeSearch();
+            if (album.artist && typeof window.__openArtistProfile === 'function') {
+                window.__openArtistProfile(album.artist);
+            } else if (album.items[0]) {
+                album.items[0].click();
+            }
+        });
+        return btn;
+    }
+
+    function buildSection(title) {
+        const sec = document.createElement('section');
+        sec.className = 'search-section';
+        const h = document.createElement('h3');
+        h.className = 'search-section-title';
+        h.textContent = title;
+        sec.appendChild(h);
+        return sec;
+    }
+
+    function renderResults(query) {
+        ensureResultsContainer();
+        if (!searchResultsEl) return;
+
+        const q = norm(query);
+        if (!q) { clearResults(); restoreNormalView(); return; }
+
+        const allItems = Array.from(playlistEl.querySelectorAll('.playlist-item'));
+        const songs       = [];
+        const artistsMap  = new Map();
+        const albumsMap   = new Map();
+
+        allItems.forEach(item => {
+            const title     = getItemTitle(item);
+            const subtitle  = getItemSubtitle(item);
+            const albumName = getItemAlbum(item);
+            const artists   = getItemArtists(item);
+            const cover     = getItemCover(item);
+
+            if (norm(title).includes(q)) songs.push(item);
+
+            artists.forEach(a => {
+                const nA = norm(a);
+                if (!nA.includes(q)) return;
+                if (!artistsMap.has(nA)) {
+                    artistsMap.set(nA, { name: a, cover, items: [] });
+                }
+                artistsMap.get(nA).items.push(item);
+            });
+
+            if (albumName && norm(albumName).includes(q)) {
+                const primaryArtist = artists[0] || '';
+                const key = norm(albumName) + '::' + norm(primaryArtist);
+                if (!albumsMap.has(key)) {
+                    albumsMap.set(key, { name: albumName, artist: primaryArtist, cover, items: [] });
+                }
+                albumsMap.get(key).items.push(item);
+            }
+        });
+
+        searchResultsEl.innerHTML = '';
+        hideAllItems();
+
+        const hasResults = songs.length || artistsMap.size || albumsMap.size;
+
+        if (!hasResults) {
+            const empty = document.createElement('div');
+            empty.className = 'search-empty';
+            const t = document.createElement('div');
+            t.className = 'search-empty-title';
+            t.textContent = 'Sin resultados';
+            empty.appendChild(t);
+            const s = document.createElement('div');
+            s.className = 'search-empty-sub';
+            s.textContent = 'No se encontró nada para "' + query + '"';
+            empty.appendChild(s);
+            searchResultsEl.appendChild(empty);
+            searchResultsEl.style.display = 'block';
+            return;
+        }
+
+        if (songs.length) {
+            const sec = buildSection('Canciones');
+            songs.slice(0, 12).forEach(item => sec.appendChild(buildSongRow(item)));
+            searchResultsEl.appendChild(sec);
+        }
+
+        if (artistsMap.size) {
+            const sec = buildSection('Artistas');
+            const grid = document.createElement('div');
+            grid.className = 'search-card-grid';
+            Array.from(artistsMap.values()).slice(0, 6).forEach(a => {
+                grid.appendChild(buildArtistCard(a));
+            });
+            sec.appendChild(grid);
+            searchResultsEl.appendChild(sec);
+        }
+
+        if (albumsMap.size) {
+            const sec = buildSection('Álbumes');
+            const grid = document.createElement('div');
+            grid.className = 'search-card-grid';
+            Array.from(albumsMap.values()).slice(0, 6).forEach(a => {
+                grid.appendChild(buildAlbumCard(a));
+            });
+            sec.appendChild(grid);
+            searchResultsEl.appendChild(sec);
+        }
+
+        searchResultsEl.style.display = 'block';
+        searchResultsEl.scrollTop = 0;
+    }
+
+    function closeSearch() {
+        if (searchInputEl) searchInputEl.value = '';
+        clearResults();
+        restoreNormalView();
+        if (searchContainerEl) searchContainerEl.classList.remove('visible');
+    }
+
+    function closeSearchAndPlay(item) {
+        if (searchInputEl) searchInputEl.value = '';
+        clearResults();
+        restoreNormalView();
+        if (searchContainerEl) searchContainerEl.classList.remove('visible');
+        setTimeout(() => item.click(), 30);
+    }
+
+    function onSearchInput() {
+        const q = (searchInputEl?.value || '').trim();
+        if (!q) {
+            if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+            clearResults();
+            restoreNormalView();
+            return;
+        }
+        hideAllItems();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => renderResults(q), 70);
+    }
+
+    function init() {
+        searchInputEl     = document.getElementById('search-input');
+        searchContainerEl = document.getElementById('search-container');
+        playlistEl        = document.getElementById('playlist');
+
+        if (!searchInputEl || !playlistEl) {
+            setTimeout(init, 200);
+            return;
+        }
+        if (searchInputEl.dataset.spotifySearchReady === '1') return;
+        searchInputEl.dataset.spotifySearchReady = '1';
+
+        ensureResultsContainer();
+        searchInputEl.addEventListener('input', onSearchInput);
+
+        // Sustituye el filtro antiguo (otras secciones lo llaman por window.*)
+        window.__applySearchVisibility = function () {
+            const q = (searchInputEl?.value || '').trim();
+            if (q) renderResults(q);
+            else { clearResults(); restoreNormalView(); }
+        };
     }
 
     if (document.readyState === 'loading') {
