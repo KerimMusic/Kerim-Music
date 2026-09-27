@@ -2011,11 +2011,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    13. CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
-   ------------------------------------------------------------
-   🆕 AJUSTE: las canciones nuevas se insertan DENTRO de la
-   categoría "Toda la música" (después del home-view), y se
-   respeta SIEMPRE la visibilidad del botón "Mostrar todas
-   las canciones" mediante __applySearchVisibility().
    ============================================================ */
 (function () {
     'use strict';
@@ -2073,7 +2068,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 frag.appendChild(div);
             });
 
-            // 🆕 Insertar DENTRO de "Toda la música" (después del home-view)
             const homeView = playlist.querySelector('#home-view');
             if (homeView) {
                 playlist.insertBefore(frag, homeView.nextSibling);
@@ -2087,7 +2081,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.__buildListenAgain();
             }
 
-            // 🆕 Respetar SIEMPRE la visibilidad de "Toda la música"
             if (typeof window.__applySearchVisibility === 'function') {
                 window.__applySearchVisibility();
             }
@@ -2105,10 +2098,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    14. INTEGRACIÓN CON "SUBIR MÚSICA"
-   ------------------------------------------------------------
-   🆕 AJUSTE: igual que la sección 13, las canciones nuevas del
-   collectionGroup 'canciones' se insertan DENTRO de "Toda la
-   música" y siempre se aplica la visibilidad correspondiente.
    ============================================================ */
 (function () {
     'use strict';
@@ -2184,7 +2173,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (el) frag.appendChild(el);
         });
 
-        // 🆕 Insertar DENTRO de "Toda la música" (después del home-view)
         const homeView = pl.querySelector('#home-view');
         if (homeView) {
             pl.insertBefore(frag, homeView.nextSibling);
@@ -2198,7 +2186,6 @@ document.addEventListener('DOMContentLoaded', () => {
             try { window.__buildListenAgain(); } catch (_) {}
         }
 
-        // 🆕 Respetar SIEMPRE la visibilidad de "Toda la música"
         if (typeof window.__applySearchVisibility === 'function') {
             try { window.__applySearchVisibility(); } catch (_) {}
         }
@@ -2212,7 +2199,6 @@ document.addEventListener('DOMContentLoaded', () => {
         removeUploadedItems();
 
         const db = firebase.firestore();
-
         const ref = db.collectionGroup('canciones');
 
         unsubscribeUploads = ref.onSnapshot(
@@ -2334,6 +2320,220 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('👀 Observador de oyentes activo para canciones nuevas');
     }
 
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
+/* ============================================================
+   16. 🆕 CERRAR SESIÓN Y ELIMINAR CUENTA
+   ------------------------------------------------------------
+   - "Cerrar Sesión": solo cierra la sesión actual (no borra datos).
+   - "Eliminar cuenta": borra TODOS los datos del usuario en
+     Firestore + elimina la cuenta de Firebase Auth, previa
+     confirmación explícita del usuario.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const MODAL_ID       = 'omega-delete-modal';
+    const MODAL_ERR_ID   = 'omega-modal-error';
+
+    /* ---------------------------------------------------------
+       Inicialización: busca los enlaces del submenú existente
+       --------------------------------------------------------- */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+
+        const links = document.querySelectorAll('.submenu-list .submenu-link');
+        let logoutLink = null;
+        let deleteLink = null;
+
+        links.forEach(link => {
+            const text = (link.textContent || '').trim().toLowerCase();
+            if (text.includes('cerrar') && text.includes('sesi')) {
+                logoutLink = link;
+            } else if (text.includes('eliminar') && text.includes('cuenta')) {
+                deleteLink = link;
+            }
+        });
+
+        if (logoutLink) {
+            logoutLink.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+                try {
+                    await firebase.auth().signOut();
+                    console.log('👋 Sesión cerrada');
+                } catch (err) {
+                    console.error('Error al cerrar sesión:', err);
+                }
+            });
+        }
+
+        if (deleteLink) {
+            deleteLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+                mostrarConfirmacionEliminar();
+            });
+        }
+    }
+
+    /* ---------------------------------------------------------
+       Modal de confirmación
+       --------------------------------------------------------- */
+    function crearModalConfirmacion() {
+        if (document.getElementById(MODAL_ID)) return;
+
+        const modal = document.createElement('div');
+        modal.id = MODAL_ID;
+        modal.setAttribute('aria-hidden', 'true');
+        modal.innerHTML = `
+            <div class="omega-modal-backdrop"></div>
+            <div class="omega-modal-box" role="dialog" aria-modal="true" aria-labelledby="omega-modal-title">
+                <h3 id="omega-modal-title" class="omega-modal-title">Eliminar cuenta</h3>
+                <p class="omega-modal-text">
+                    ¿Estás seguro de que deseas eliminar tu cuenta?
+                    Esta acción eliminará permanentemente todos tus datos
+                    y no se puede deshacer.
+                </p>
+                <p class="omega-modal-error" id="${MODAL_ERR_ID}"></p>
+                <div class="omega-modal-actions">
+                    <button type="button" class="omega-modal-btn omega-modal-btn-cancel" id="omega-modal-cancel">Cancelar</button>
+                    <button type="button" class="omega-modal-btn omega-modal-btn-confirm" id="omega-modal-confirm">Eliminar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    function mostrarConfirmacionEliminar() {
+        crearModalConfirmacion();
+
+        const modal      = document.getElementById(MODAL_ID);
+        const errEl      = document.getElementById(MODAL_ERR_ID);
+        const cancelBtn  = document.getElementById('omega-modal-cancel');
+        const confirmBtn = document.getElementById('omega-modal-confirm');
+
+        if (errEl) errEl.textContent = '';
+        modal.classList.add('visible');
+        modal.setAttribute('aria-hidden', 'false');
+
+        const cleanup = () => {
+            modal.classList.remove('visible');
+            modal.setAttribute('aria-hidden', 'true');
+            cancelBtn.removeEventListener('click', onCancel);
+            confirmBtn.removeEventListener('click', onConfirm);
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Eliminar';
+        };
+
+        function onCancel() {
+            if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+            cleanup();
+        }
+
+        async function onConfirm() {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Eliminando…';
+            if (errEl) errEl.textContent = '';
+
+            try {
+                await eliminarCuentaYUsuario();
+                cleanup();
+                console.log('✅ Cuenta eliminada correctamente');
+            } catch (err) {
+                console.error('Error al eliminar cuenta:', err);
+                let msg = 'No se pudo eliminar la cuenta. Intenta de nuevo.';
+                if (err && err.code === 'auth/requires-recent-login') {
+                    msg = 'Por seguridad, cierra sesión, vuelve a entrar y prueba otra vez.';
+                } else if (err && err.code === 'auth/network-request-failed') {
+                    msg = 'Sin conexión. Revisa tu internet.';
+                }
+                if (errEl) errEl.textContent = msg;
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Eliminar';
+            }
+        }
+
+        cancelBtn.addEventListener('click', onCancel);
+        confirmBtn.addEventListener('click', onConfirm);
+    }
+
+    /* ---------------------------------------------------------
+       Eliminación completa de datos + cuenta
+       --------------------------------------------------------- */
+    async function eliminarCuentaYUsuario() {
+        const user = firebase.auth().currentUser;
+        if (!user) throw new Error('No hay sesión activa');
+
+        const uid = user.uid;
+        const db  = firebase.firestore();
+
+        /* 1) Historial del usuario */
+        try {
+            await db.collection('historial_usuarios').doc(uid).delete();
+        } catch (e) { console.warn('No se pudo borrar historial:', e); }
+
+        /* 2) Entradas como oyente en cada canción */
+        try {
+            const snap = await db.collection('oyentes_canciones').get();
+            const batch = db.batch();
+            let ops = 0;
+            snap.forEach(docSnap => {
+                const data = docSnap.data() || {};
+                const oyentes = data.oyentes || {};
+                if (oyentes[uid]) {
+                    batch.update(docSnap.ref, {
+                        [`oyentes.${uid}`]: firebase.firestore.FieldValue.delete()
+                    });
+                    ops++;
+                }
+            });
+            if (ops > 0) await batch.commit();
+        } catch (e) { console.warn('No se pudieron borrar oyentes:', e); }
+
+        /* 3) Canciones subidas (colección canciones_usuarios) */
+        try {
+            const snap = await db.collection('canciones_usuarios')
+                                 .where('uid', '==', uid).get();
+            if (!snap.empty) {
+                const batch = db.batch();
+                snap.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+            }
+        } catch (e) { console.warn('No se pudieron borrar canciones_usuarios:', e); }
+
+        /* 4) Subcolecciones "canciones" (collectionGroup) */
+        try {
+            const snap = await db.collectionGroup('canciones').get();
+            const batch = db.batch();
+            let ops = 0;
+            snap.forEach(docSnap => {
+                const d = docSnap.data() || {};
+                if (d.uid === uid) {
+                    batch.delete(docSnap.ref);
+                    ops++;
+                }
+            });
+            if (ops > 0) await batch.commit();
+        } catch (e) { console.warn('No se pudieron borrar subcolecciones:', e); }
+
+        /* 5) Finalmente, eliminar la cuenta de Firebase Auth */
+        await user.delete();
+    }
+
+    /* ---------------------------------------------------------
+       Arranque
+       --------------------------------------------------------- */
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
