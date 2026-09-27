@@ -2011,6 +2011,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    13. CARGAR CANCIONES SUBIDAS POR USUARIOS (Firestore)
+   ------------------------------------------------------------
+   🆕 AJUSTE: las canciones nuevas se insertan DENTRO de la
+   categoría "Toda la música" (después del home-view), y se
+   respeta SIEMPRE la visibilidad del botón "Mostrar todas
+   las canciones" mediante __applySearchVisibility().
    ============================================================ */
 (function () {
     'use strict';
@@ -2033,6 +2038,8 @@ document.addEventListener('DOMContentLoaded', () => {
           .onSnapshot((snap) => {
             playlist.querySelectorAll('.playlist-item[data-user-upload="1"]')
                     .forEach(el => el.remove());
+
+            const frag = document.createDocumentFragment();
 
             snap.forEach(doc => {
                 const d = doc.data();
@@ -2063,8 +2070,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 `;
 
-                playlist.insertBefore(div, playlist.firstChild);
+                frag.appendChild(div);
             });
+
+            // 🆕 Insertar DENTRO de "Toda la música" (después del home-view)
+            const homeView = playlist.querySelector('#home-view');
+            if (homeView) {
+                playlist.insertBefore(frag, homeView.nextSibling);
+            } else {
+                playlist.insertBefore(frag, playlist.firstChild);
+            }
 
             console.log(`✅ ${snap.size} canciones subidas cargadas`);
 
@@ -2072,7 +2087,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.__buildListenAgain();
             }
 
-            if (window.__showAllSongs && typeof window.__applySearchVisibility === 'function') {
+            // 🆕 Respetar SIEMPRE la visibilidad de "Toda la música"
+            if (typeof window.__applySearchVisibility === 'function') {
                 window.__applySearchVisibility();
             }
           }, (err) => {
@@ -2089,6 +2105,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    14. INTEGRACIÓN CON "SUBIR MÚSICA"
+   ------------------------------------------------------------
+   🆕 AJUSTE: igual que la sección 13, las canciones nuevas del
+   collectionGroup 'canciones' se insertan DENTRO de "Toda la
+   música" y siempre se aplica la visibilidad correspondiente.
    ============================================================ */
 (function () {
     'use strict';
@@ -2164,14 +2184,22 @@ document.addEventListener('DOMContentLoaded', () => {
             if (el) frag.appendChild(el);
         });
 
-        pl.insertBefore(frag, pl.firstChild);
+        // 🆕 Insertar DENTRO de "Toda la música" (después del home-view)
+        const homeView = pl.querySelector('#home-view');
+        if (homeView) {
+            pl.insertBefore(frag, homeView.nextSibling);
+        } else {
+            pl.insertBefore(frag, pl.firstChild);
+        }
 
         console.log('🎵 Reproductor: ' + ordenadas.length + ' canción(es) subida(s) integradas.');
 
         if (typeof window.__buildListenAgain === 'function') {
             try { window.__buildListenAgain(); } catch (_) {}
         }
-        if (window.__showAllSongs && typeof window.__applySearchVisibility === 'function') {
+
+        // 🆕 Respetar SIEMPRE la visibilidad de "Toda la música"
+        if (typeof window.__applySearchVisibility === 'function') {
             try { window.__applySearchVisibility(); } catch (_) {}
         }
     }
@@ -2245,15 +2273,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    15. 🎧 OYENTES AUTOMÁTICOS PARA CANCIONES NUEVAS
-   ------------------------------------------------------------
-   Detecta cualquier .playlist-item que se agregue dinámicamente
-   (Firestore: canciones_usuarios / collectionGroup 'canciones')
-   y le aplica EXACTAMENTE el mismo sistema de oyentes que ya
-   tienen las canciones fijas:
-     • Carga el conteo desde Firestore (oyentes_canciones/{titulo})
-     • Pinta el badge "👥 N oyentes" en el item
-     • Al terminar la canción, registrarOyente() lo actualiza
-   Se mantiene activo mientras el item exista en el DOM.
    ============================================================ */
 (function () {
     'use strict';
