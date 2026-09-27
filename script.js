@@ -785,7 +785,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('.submenu-link').forEach(link => {
         link.addEventListener('click', (e) => {
-            // No cerrar si es el link de cerrar sesión (lo maneja su propio módulo)
             if (link.id === 'logout-link') return;
             closeSubmenu();
         });
@@ -1309,9 +1308,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && profileEl.classList.contains('visible')) closeProfile();
         });
-        // (Desactivado) Antes abría el perfil automáticamente al escribir el nombre exacto.
-        // Ahora el buscador tipo Spotify muestra al artista como resultado y el usuario
-        // decide si entra a su perfil. Esto evita que la vista de resultados se cierre sola.
 
         window.__openArtistProfile = openProfile;
     }
@@ -1627,6 +1623,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'use strict';
     const CAROUSEL_LIMIT = 12;
     const COLLAB_SPLIT   = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
     function norm(str) {
         if (typeof normalizeStr === 'function') return normalizeStr(str);
         return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
@@ -1702,6 +1699,52 @@ document.addEventListener('DOMContentLoaded', () => {
         return btn;
     }
 
+    /* 🎵 NUEVO: Tarjeta "Tu Playlist" con collage 2×2 */
+    function makeTuPlaylistCard(items) {
+        if (!items || !items.length) return null;
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'home-card home-card--playlist';
+        btn.setAttribute('aria-label', 'Tu Playlist');
+
+        const thumb = document.createElement('div');
+        thumb.className = 'home-card-thumb home-card-thumb--collage';
+
+        const covers = items.slice(0, 4).map(it => getItemCover(it));
+        while (covers.length < 4) covers.push('');
+
+        covers.forEach((cover) => {
+            const cell = document.createElement('div');
+            cell.className = 'collage-cell';
+            if (cover) {
+                const img = document.createElement('img');
+                img.src = cover;
+                img.alt = '';
+                img.loading = 'lazy';
+                cell.appendChild(img);
+            }
+            thumb.appendChild(cell);
+        });
+        btn.appendChild(thumb);
+
+        const title = document.createElement('span');
+        title.className = 'home-card-title';
+        title.textContent = 'Tu Playlist';
+        btn.appendChild(title);
+
+        const sub = document.createElement('span');
+        sub.className = 'home-card-sub';
+        sub.textContent = items.length + ' canción' + (items.length === 1 ? '' : 'es');
+        btn.appendChild(sub);
+
+        btn.addEventListener('click', () => {
+            if (items[0]) items[0].click();
+        });
+
+        return btn;
+    }
+
     function buildArtists() {
         const sec = document.getElementById('sec-artists');
         const carousel = document.getElementById('carousel-artists');
@@ -1741,6 +1784,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* 🎵 MODIFICADO: ahora renderiza la tarjeta "Tu Playlist" */
     function buildListenAgain() {
         const sec = document.getElementById('sec-listen-again');
         const carousel = document.getElementById('carousel-listen-again');
@@ -1766,7 +1810,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!items.length) { sec.style.display = 'none'; return; }
         sec.style.display = '';
-        items.forEach(it => carousel.appendChild(makeSongCard(it)));
+
+        const playlistCard = makeTuPlaylistCard(items);
+        if (playlistCard) carousel.appendChild(playlistCard);
     }
 
     function buildMaybe() {
@@ -1853,19 +1899,30 @@ document.addEventListener('DOMContentLoaded', () => {
         buildAlbums();
     }
 
+    /* 🎵 MODIFICADO: solo guarda en historial si se escuchó COMPLETAMENTE */
     function initHistoryTracking() {
         const audio = document.getElementById('audio-player');
         const pl    = document.getElementById('playlist');
         if (!audio || !pl) return;
+
+        let playingTitle = '';
+
         audio.addEventListener('play', () => {
             const active = pl.querySelector('.playlist-item.active');
-            if (!active) return;
-            const titulo = getItemTitle(active);
-            if (titulo && typeof window.__guardarEnHistorial === 'function') {
-                window.__guardarEnHistorial(titulo);
-            }
+            playingTitle = active ? getItemTitle(active) : '';
         });
+
         audio.addEventListener('ended', () => {
+            const duration = audio.duration;
+            const played   = audio.currentTime;
+            const completed = !!duration && isFinite(duration) && played >= (duration - 1.5);
+
+            if (completed && playingTitle) {
+                if (typeof window.__guardarEnHistorial === 'function') {
+                    window.__guardarEnHistorial(playingTitle);
+                }
+            }
+
             setTimeout(() => {
                 buildListenAgain();
                 buildMaybe();
@@ -2378,19 +2435,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 await firebase.auth().signOut();
                 console.log('✅ Sesión cerrada correctamente');
 
-                // Cerrar submenú
                 const submenu = document.getElementById('submenu');
                 const overlay = document.getElementById('submenu-overlay');
                 if (submenu) submenu.classList.remove('visible');
                 if (overlay) overlay.classList.remove('visible');
 
-                // Resetear buscador
                 const searchInput = document.getElementById('search-input');
                 const searchContainer = document.getElementById('search-container');
                 if (searchInput) searchInput.value = '';
                 if (searchContainer) searchContainer.classList.remove('visible');
-
-                // onAuthStateChanged se encarga de mostrar el auth-gate
             } catch (err) {
                 console.error('Error al cerrar sesión:', err);
                 alert('No se pudo cerrar sesión. Intenta de nuevo.');
@@ -2752,7 +2805,6 @@ document.addEventListener('DOMContentLoaded', () => {
         ensureResultsContainer();
         searchInputEl.addEventListener('input', onSearchInput);
 
-        // Sustituye el filtro antiguo (otras secciones lo llaman por window.*)
         window.__applySearchVisibility = function () {
             const q = (searchInputEl?.value || '').trim();
             if (q) renderResults(q);
