@@ -3732,3 +3732,332 @@ document.addEventListener('DOMContentLoaded', () => {
         boot();
     }
 })();
+
+/* ============================================================
+   23. PERMISOS DE PLAYLISTS PÚBLICAS
+   ------------------------------------------------------------
+   - Carga y muestra las playlists públicas de OTROS usuarios
+     en la vista "Mi Playlist" (sección inferior).
+   - Cuando un usuario abre una playlist pública que NO es suya,
+     se marca isOwner:false y se ocultan automáticamente:
+        · Botón "Compartir playlist" (#pv-share)
+        · Botón "Editar playlist"   (#pv-edit)
+   - El propietario conserva todos los permisos.
+   - No modifica ninguna sección existente.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const COLLECTION = 'mis_playlists';
+    let publicUnsubscribe = null;
+    let publicPlaylistsCache = [];
+    let ownersCache = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    /* ---------- Estilos mínimos para la nueva sección ---------- */
+    (function injectStyles() {
+        if (document.getElementById('mp-public-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'mp-public-styles';
+        style.textContent = `
+            #mp-public-section {
+                margin-top: 22px;
+                padding-top: 18px;
+                border-top: 1px solid #1f1f1f;
+            }
+            #mp-public-title {
+                font-size: 13px;
+                font-weight: 800;
+                color: #ff2a2a;
+                text-transform: uppercase;
+                letter-spacing: 1.6px;
+                margin: 0 0 12px 4px;
+            }
+            .mp-card-owner {
+                margin-top: 2px;
+                font-size: 10.5px;
+                color: #888888;
+                display: -webkit-box;
+                -webkit-line-clamp: 1;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+        `;
+        document.head.appendChild(style);
+    })();
+
+    /* ---------- Cargar nombres de propietarios (cache) ---------- */
+    async function cargarOwners() {
+        if (ownersCache) return ownersCache;
+        try {
+            const snap = await firebase.firestore().collection('historial_usuarios').limit(1000).get();
+            const map = new Map();
+            snap.forEach(doc => {
+                const d = doc.data() || {};
+                const nombre = d.nombre || d.name || d.displayName || (d.email ? String(d.email).split('@')[0] : 'Usuario');
+                map.set(doc.id, nombre);
+            });
+            ownersCache = map;
+        } catch (e) {
+            ownersCache = new Map();
+        }
+        return ownersCache;
+    }
+
+    /* ---------- Render de la sección "Playlists públicas" ---------- */
+    function ensurePublicSection() {
+        const view = $('mi-playlist-view');
+        if (!view) return null;
+        const scroll = $('mp-scroll');
+        if (!scroll) return null;
+
+        let container = $('mp-public-section');
+        if (container && container.isConnected) return container;
+
+        container = document.createElement('div');
+        container.id = 'mp-public-section';
+        container.style.display = 'none';
+
+        const title = document.createElement('h2');
+        title.id = 'mp-public-title';
+        title.textContent = 'Playlists públicas';
+        container.appendChild(title);
+
+        const grid = document.createElement('div');
+        grid.className = 'mp-grid';
+        grid.id = 'mp-public-grid';
+        container.appendChild(grid);
+
+        // Insertar después del grid propio (mp-grid) y antes del mp-empty
+        const ownGrid = $('mp-grid');
+        const empty = $('mp-empty');
+        if (ownGrid && ownGrid.parentNode === scroll) {
+            if (ownGrid.nextSibling) scroll.insertBefore(container, ownGrid.nextSibling);
+            else scroll.appendChild(container);
+        } else if (empty && empty.parentNode === scroll) {
+            scroll.insertBefore(container, empty);
+        } else {
+            scroll.appendChild(container);
+        }
+        return container;
+    }
+
+    function makeCollageThumb(canciones) {
+        const thumb = document.createElement('div');
+        thumb.className = 'mp-card-thumb';
+        const covers = (Array.isArray(canciones) ? canciones : []).slice(0, 4).map(c => c.portada || '');
+        while (covers.length < 4) covers.push('');
+        covers.forEach(cover => {
+            const cell = document.createElement('div');
+            cell.className = 'playlist-collage-cell';
+            if (cover) {
+                const img = document.createElement('img');
+                img.src = cover; img.alt = ''; img.loading = 'lazy';
+                img.onerror = function () { this.remove(); };
+                cell.appendChild(img);
+            }
+            thumb.appendChild(cell);
+        });
+        return thumb;
+    }
+
+    function renderPublicPlaylists() {
+        const container = ensurePublicSection();
+        if (!container) return;
+        const grid = $('mp-public-grid');
+        if (!grid) return;
+        grid.innerHTML = '';
+
+        const currentUid = (firebase.auth().currentUser && firebase.auth().currentUser.uid) || '';
+        const others = publicPlaylistsCache.filter(pl =>
+            pl && pl.uid && pl.uid !== currentUid && pl.privada === false
+        );
+
+        if (!others.length) {
+            container.style.display = 'none';
+            refreshEmptyState();
+            return;
+        }
+        container.style.display = '';
+
+        others.forEach(pl => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'mp-card';
+            card.setAttribute('aria-label', pl.nombre || 'Playlist');
+
+            card.appendChild(makeCollageThumb(pl.canciones));
+
+            const t = document.createElement('span');
+            t.className = 'mp-card-title';
+            t.textContent = pl.nombre || 'Playlist';
+            card.appendChild(t);
+
+            const n = Array.isArray(pl.canciones) ? pl.canciones.length : 0;
+            const s = document.createElement('span');
+            s.className = 'mp-card-sub';
+            s.textContent = n + ' ' + (n === 1 ? 'canción' : 'canciones') + ' · Pública';
+            card.appendChild(s);
+
+            const owner = document.createElement('span');
+            owner.className = 'mp-card-owner';
+            owner.textContent = 'De ' + (pl.ownerName || 'un usuario');
+            card.appendChild(owner);
+
+            card.addEventListener('click', () => openPublicPlaylist(pl));
+            grid.appendChild(card);
+        });
+
+        refreshEmptyState();
+    }
+
+    /* ---------- Ocultar mensaje "sin playlists" si hay públicas ---------- */
+    function refreshEmptyState() {
+        const empty = $('mp-empty');
+        if (!empty) return;
+        const ownGrid = $('mp-grid');
+        const pubGrid = $('mp-public-grid');
+        const hasOwn = ownGrid && ownGrid.children.length > 0;
+        const hasPublic = pubGrid && pubGrid.children.length > 0;
+        empty.style.display = (hasOwn || hasPublic) ? 'none' : '';
+    }
+
+    /* ---------- Abrir playlist pública como NO propietario ---------- */
+    function openPublicPlaylist(pl) {
+        const canciones = (Array.isArray(pl.canciones) ? pl.canciones : []).map(c => ({
+            titulo: c.titulo,
+            portada: c.portada || '',
+            subtitulo: c.subtitulo || ''
+        }));
+        const plView = {
+            id: pl.id,
+            nombre: pl.nombre,
+            canciones,
+            isOwner: false,          // <- usuario actual NO es dueño
+            esMiPlaylist: false,
+            esPublica: true,
+            privada: false,
+            ownerUid: pl.uid,
+            ownerName: pl.ownerName || ''
+        };
+        if (typeof window.__openPlaylistView === 'function') window.__openPlaylistView(plView);
+    }
+
+    /* ---------- Cargar playlists públicas desde Firestore ---------- */
+    function loadPublicPlaylists() {
+        const user = firebase.auth().currentUser;
+        if (publicUnsubscribe) { publicUnsubscribe(); publicUnsubscribe = null; }
+        if (!user) {
+            publicPlaylistsCache = [];
+            renderPublicPlaylists();
+            return;
+        }
+
+        publicUnsubscribe = firebase.firestore()
+            .collection(COLLECTION)
+            .where('privada', '==', false)
+            .onSnapshot(async (snap) => {
+                const owners = await cargarOwners();
+                const list = [];
+                snap.forEach(doc => {
+                    const d = doc.data() || {};
+                    if (!d.uid || d.uid === user.uid) return; // no mostrar las propias aquí
+                    list.push({
+                        id: doc.id,
+                        uid: d.uid,
+                        nombre: d.nombre || 'Playlist',
+                        privada: false,
+                        canciones: Array.isArray(d.canciones) ? d.canciones : [],
+                        ownerName: owners.get(d.uid) || 'Usuario'
+                    });
+                });
+                list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+                publicPlaylistsCache = list;
+                renderPublicPlaylists();
+            }, (err) => {
+                console.warn('⚠️ No se pudieron cargar las playlists públicas:', err);
+                publicPlaylistsCache = [];
+                renderPublicPlaylists();
+            });
+    }
+
+    /* ---------- Aplicar permisos según isOwner ---------- */
+    function applyOwnershipUI() {
+        const view = $('playlist-view');
+        if (!view || !view.classList.contains('visible')) return;
+        const pl = window.__currentOpenPlaylist;
+        if (!pl) return;
+
+        const isOwner = pl.isOwner === true;
+        const shareBtn = $('pv-share');
+        const editBtn = $('pv-edit');
+
+        if (shareBtn) shareBtn.style.display = isOwner ? '' : 'none';
+        if (editBtn) editBtn.style.display = isOwner ? '' : 'none';
+    }
+
+    function watchPlaylistView() {
+        const view = $('playlist-view');
+        if (!view || view.dataset.ownerWatcherReady === '1') return;
+        view.dataset.ownerWatcherReady = '1';
+        const obs = new MutationObserver(() => {
+            if (view.classList.contains('visible')) {
+                // Esperar a que __currentOpenPlaylist esté actualizado
+                setTimeout(applyOwnershipUI, 0);
+                setTimeout(applyOwnershipUI, 60);
+                setTimeout(applyOwnershipUI, 200);
+            }
+        });
+        obs.observe(view, { attributes: true, attributeFilter: ['class'] });
+        if (view.classList.contains('visible')) applyOwnershipUI();
+    }
+
+    function wrapOpenPlaylistView() {
+        if (typeof window.__openPlaylistView === 'function' && !window.__openPlaylistView.__ownerWrapped) {
+            const orig = window.__openPlaylistView;
+            const wrapped = function (pl) {
+                // Guardamos el playlist actual y decidimos permisos
+                window.__currentOpenPlaylist = pl;
+                const result = orig.apply(this, arguments);
+                setTimeout(applyOwnershipUI, 0);
+                setTimeout(applyOwnershipUI, 80);
+                return result;
+            };
+            wrapped.__ownerWrapped = true;
+            window.__openPlaylistView = wrapped;
+        }
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+
+        wrapOpenPlaylistView();
+        watchPlaylistView();
+        ensurePublicSection();
+
+        // Observar cambios en mp-grid propio para ajustar el mensaje vacío
+        const ownGrid = $('mp-grid');
+        if (ownGrid && ownGrid.dataset.emptyWatcherReady !== '1') {
+            ownGrid.dataset.emptyWatcherReady = '1';
+            const obs = new MutationObserver(() => refreshEmptyState());
+            obs.observe(ownGrid, { childList: true });
+        }
+
+        firebase.auth().onAuthStateChanged(user => {
+            if (user) loadPublicPlaylists();
+            else {
+                if (publicUnsubscribe) { publicUnsubscribe(); publicUnsubscribe = null; }
+                publicPlaylistsCache = [];
+                renderPublicPlaylists();
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+})();
