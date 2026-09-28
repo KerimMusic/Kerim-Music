@@ -3661,3 +3661,74 @@ document.addEventListener('DOMContentLoaded', () => {
         if (el) forceReset(el);
     };
 })();
+
+/* ============================================================
+   22. VENTANAS EXCLUSIVAS
+   ------------------------------------------------------------
+   Solo una ventana principal puede estar abierta a la vez.
+   Cuando se abre una nueva (Playlist, Perfil de artista,
+   Álbum o Mi Playlist), cualquier otra se cierra sola.
+   - No interfiere con modales internos (share-modal,
+     mp-create-modal, mp-add-modal), que siguen apilándose
+     sobre su ventana padre.
+   - Respeta el reset de scroll de la sección 21.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const MAIN_VIEW_IDS = [
+        'playlist-view',
+        'artist-profile',
+        'album-view',
+        'mi-playlist-view'
+    ];
+
+    function getMainViews() {
+        return MAIN_VIEW_IDS
+            .map(id => document.getElementById(id))
+            .filter(Boolean);
+    }
+
+    function closeOthers(activeEl) {
+        getMainViews().forEach(el => {
+            if (el === activeEl) return;
+            if (!el.classList.contains('visible')) return;
+            el.classList.remove('visible');
+            el.setAttribute('aria-hidden', 'true');
+        });
+    }
+
+    function observeView(el) {
+        if (!el || el.dataset.exclusiveReady === '1') return;
+        el.dataset.exclusiveReady = '1';
+        const obs = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if (m.attributeName !== 'class') continue;
+                if (el.classList.contains('visible')) {
+                    closeOthers(el);
+                    break;
+                }
+            }
+        });
+        obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    function scan() {
+        getMainViews().forEach(observeView);
+    }
+
+    let attempts = 0;
+    function boot() {
+        attempts++;
+        scan();
+        if (attempts < 20 && getMainViews().length === 0) {
+            setTimeout(boot, 200);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+})();
