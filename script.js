@@ -3663,248 +3663,72 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   22. PLAYLISTS PÚBLICAS EN EL REPRODUCTOR
+   22. VENTANAS EXCLUSIVAS
    ------------------------------------------------------------
-   - Se leen de "mis_playlists" donde privada == false.
-   - Aparecen SOLO en el reproductor (home), nunca dentro de
-     "Mi Playlist" de otros usuarios.
-   - El propietario conserva control total (editar, compartir).
-   - Los demás usuarios solo pueden VER y REPRODUCIR: se les
-     oculta el botón de compartir y nunca verán el de editar.
+   Solo una ventana principal puede estar abierta a la vez.
+   Cuando se abre una nueva (Playlist, Perfil de artista,
+   Álbum o Mi Playlist), cualquier otra se cierra sola.
+   - No interfiere con modales internos (share-modal,
+     mp-create-modal, mp-add-modal), que siguen apilándose
+     sobre su ventana padre.
+   - Respeta el reset de scroll de la sección 21.
    ============================================================ */
 (function () {
     'use strict';
 
-    let publicUnsubscribe = null;
+    const MAIN_VIEW_IDS = [
+        'playlist-view',
+        'artist-profile',
+        'album-view',
+        'mi-playlist-view'
+    ];
 
-    function $(id) { return document.getElementById(id); }
-
-    /* -------- Crear (si no existe) la sección de públicas -------- */
-    function ensurePublicSection() {
-        let sec = $('sec-public');
-        if (sec) return { sec, carousel: $('carousel-public') };
-
-        const homeView = $('home-view');
-        if (!homeView) return null;
-
-        // Clonamos la estructura/clases de una sección existente para mantener el estilo
-        const template =
-            $('sec-listen-again') || $('sec-shared') ||
-            $('sec-artists')      || $('sec-top')    ||
-            $('sec-maybe')        || $('sec-albums');
-
-        sec = document.createElement('section');
-        sec.id = 'sec-public';
-        if (template && template.className) sec.className = template.className;
-        sec.style.display = 'none';
-
-        // Título
-        const templateTitle = template
-            ? template.querySelector('h1, h2, h3, [class*="section-title"], [class*="title"]')
-            : null;
-        const title = document.createElement(templateTitle ? templateTitle.tagName : 'h2');
-        if (templateTitle && templateTitle.className) title.className = templateTitle.className;
-        else title.className = 'home-section-title';
-        title.textContent = 'Playlists públicas';
-        sec.appendChild(title);
-
-        // Carrusel
-        const templateCarousel = template ? template.querySelector('[id^="carousel-"]') : null;
-        const carousel = document.createElement('div');
-        carousel.id = 'carousel-public';
-        if (templateCarousel && templateCarousel.className) carousel.className = templateCarousel.className;
-        sec.appendChild(carousel);
-
-        // Insertar después de "sec-shared" si existe, si no al final del home
-        const sharedSec = $('sec-shared');
-        if (sharedSec && sharedSec.parentNode === homeView) {
-            homeView.insertBefore(sec, sharedSec.nextSibling);
-        } else {
-            homeView.appendChild(sec);
-        }
-        return { sec, carousel };
+    function getMainViews() {
+        return MAIN_VIEW_IDS
+            .map(id => document.getElementById(id))
+            .filter(Boolean);
     }
 
-    /* -------- Utilidad: encontrar el item local por título -------- */
-    function findLocalItemByTitle(title) {
-        const pl = $('playlist');
-        if (!pl) return null;
-        const n = String(title || '').toLowerCase().trim();
-        if (!n) return null;
-        for (const it of pl.querySelectorAll('.playlist-item')) {
-            const t = (it.querySelector('.item-title')?.textContent || '').trim().toLowerCase();
-            if (t === n) return it;
-        }
-        return null;
-    }
-
-    /* -------- Abrir el detalle de una playlist pública -------- */
-    function openPublicPlaylistView(pl) {
-        const currentUid = (firebase.auth().currentUser && firebase.auth().currentUser.uid) || '';
-        const isOwner = pl.uid === currentUid;
-
-        const canciones = (Array.isArray(pl.canciones) ? pl.canciones : []).map(c => {
-            const local = findLocalItemByTitle(c.titulo);
-            return {
-                titulo: c.titulo,
-                portada: (local && local.querySelector('.thumbnail img')?.src) || c.portada || '',
-                subtitulo:
-                    (local && local.querySelector('.item-subtitle')?.textContent.trim()) ||
-                    c.subtitulo || ''
-            };
-        });
-
-        const plView = {
-            id: pl.id,
-            nombre: pl.nombre,
-            canciones,
-            isOwner,
-            esMiPlaylist: isOwner,
-            privada: false,
-            esPublica: true
-        };
-        if (typeof window.__openPlaylistView === 'function') {
-            window.__openPlaylistView(plView);
-        }
-    }
-
-    /* -------- Render del carrusel -------- */
-    function renderPublicPlaylists(playlists) {
-        const els = ensurePublicSection();
-        if (!els) return;
-        const { sec, carousel } = els;
-        carousel.innerHTML = '';
-
-        if (!playlists.length) {
-            sec.style.display = 'none';
-            return;
-        }
-        sec.style.display = '';
-
-        const currentUid = (firebase.auth().currentUser && firebase.auth().currentUser.uid) || '';
-
-        playlists.forEach(pl => {
-            const card = document.createElement('button');
-            card.type = 'button';
-            card.className = 'home-card home-card--playlist';
-            card.setAttribute('aria-label', pl.nombre || 'Playlist');
-
-            // Collage de portadas
-            const thumb = document.createElement('div');
-            thumb.className = 'home-card-thumb playlist-collage';
-            const canciones = Array.isArray(pl.canciones) ? pl.canciones : [];
-            const covers = canciones.slice(0, 4).map(c => {
-                const local = findLocalItemByTitle(c.titulo);
-                return local ? (local.querySelector('.thumbnail img')?.src || '') : (c.portada || '');
-            });
-            while (covers.length < 4) covers.push('');
-            covers.forEach(cover => {
-                const cell = document.createElement('div');
-                cell.className = 'playlist-collage-cell';
-                if (cover) {
-                    const img = document.createElement('img');
-                    img.src = cover; img.alt = ''; img.loading = 'lazy';
-                    cell.appendChild(img);
-                }
-                thumb.appendChild(cell);
-            });
-            card.appendChild(thumb);
-
-            // Título
-            const t = document.createElement('span');
-            t.className = 'home-card-title';
-            t.textContent = pl.nombre || 'Playlist';
-            card.appendChild(t);
-
-            // Subtítulo
-            const s = document.createElement('span');
-            s.className = 'home-card-sub';
-            const n = canciones.length;
-            const isOwner = pl.uid === currentUid;
-            s.textContent = (isOwner ? 'Tu playlist · ' : 'Pública · ')
-                          + n + ' ' + (n === 1 ? 'canción' : 'canciones');
-            card.appendChild(s);
-
-            card.addEventListener('click', () => {
-                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
-                openPublicPlaylistView(pl);
-            });
-            carousel.appendChild(card);
+    function closeOthers(activeEl) {
+        getMainViews().forEach(el => {
+            if (el === activeEl) return;
+            if (!el.classList.contains('visible')) return;
+            el.classList.remove('visible');
+            el.setAttribute('aria-hidden', 'true');
         });
     }
 
-    /* -------- Listener en tiempo real de playlists públicas -------- */
-    function listenPublicPlaylists() {
-        if (publicUnsubscribe) { publicUnsubscribe(); publicUnsubscribe = null; }
-        publicUnsubscribe = firebase.firestore()
-            .collection('mis_playlists')
-            .where('privada', '==', false)
-            .onSnapshot(snap => {
-                const list = [];
-                snap.forEach(doc => {
-                    const d = doc.data() || {};
-                    list.push({
-                        id: doc.id,
-                        uid: d.uid || '',
-                        nombre: d.nombre || 'Playlist',
-                        canciones: Array.isArray(d.canciones) ? d.canciones.slice() : []
-                    });
-                });
-                list.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
-                renderPublicPlaylists(list);
-            }, err => {
-                console.warn('⚠️ Error cargando playlists públicas:', err);
-                renderPublicPlaylists([]);
-            });
-    }
-
-    /* -------- Permisos: ocultar "Compartir" a no-propietarios --------
-       Solo tocamos playlists marcadas como esPublica, para no alterar
-       el comportamiento de las playlists compartidas entre usuarios
-       que ya existían.                                              */
-    function wrapPlaylistViewForPermissions() {
-        if (typeof window.__openPlaylistView !== 'function') return;
-        if (window.__openPlaylistView.__publicPermWrapped) return;
-
-        const orig = window.__openPlaylistView;
-        const wrapped = function (pl) {
-            const result = orig.apply(this, arguments);
-            const shareBtn = document.getElementById('pv-share');
-            if (shareBtn && pl && pl.esPublica) {
-                // Resetear inline style y volver a decidir según ownership
-                shareBtn.style.display = '';
-                if (pl.isOwner !== true) {
-                    shareBtn.style.display = 'none';
+    function observeView(el) {
+        if (!el || el.dataset.exclusiveReady === '1') return;
+        el.dataset.exclusiveReady = '1';
+        const obs = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if (m.attributeName !== 'class') continue;
+                if (el.classList.contains('visible')) {
+                    closeOthers(el);
+                    break;
                 }
             }
-            return result;
-        };
-        wrapped.__publicPermWrapped = true;
-        window.__openPlaylistView = wrapped;
+        });
+        obs.observe(el, { attributes: true, attributeFilter: ['class'] });
     }
 
-    /* -------- Init -------- */
-    function init() {
-        if (typeof firebase === 'undefined' || !firebase.auth) {
-            setTimeout(init, 300);
-            return;
-        }
-        wrapPlaylistViewForPermissions();
+    function scan() {
+        getMainViews().forEach(observeView);
+    }
 
-        firebase.auth().onAuthStateChanged(user => {
-            if (user) {
-                wrapPlaylistViewForPermissions();
-                listenPublicPlaylists();
-            } else {
-                if (publicUnsubscribe) { publicUnsubscribe(); publicUnsubscribe = null; }
-                renderPublicPlaylists([]);
-            }
-        });
+    let attempts = 0;
+    function boot() {
+        attempts++;
+        scan();
+        if (attempts < 20 && getMainViews().length === 0) {
+            setTimeout(boot, 200);
+        }
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', boot);
     } else {
-        init();
+        boot();
     }
 })();
