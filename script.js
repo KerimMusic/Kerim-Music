@@ -5731,3 +5731,34 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+/* ============================================================
+   28. TOKEN FCM → Guardar en Firestore
+   ============================================================ */
+(function () {
+    'use strict';
+
+    window.recibirTokenFCM = async function (token) {
+        if (!token) return;
+        const user = firebase.auth().currentUser;
+        if (!user) {
+            window.__pendingFCMToken = token;
+            return;
+        }
+        try {
+            await firebase.firestore()
+                .collection('historial_usuarios')
+                .doc(user.uid)
+                .set({ fcmToken: token }, { merge: true });
+            console.log('✅ Token FCM guardado en Firestore');
+        } catch (e) {
+            console.warn('⚠️ No se pudo guardar el token FCM:', e);
+        }
+    };
+
+    firebase.auth().onAuthStateChanged(user => {
+        if (user && window.__pendingFCMToken) {
+            window.recibirTokenFCM(window.__pendingFCMToken);
+            window.__pendingFCMToken = null;
+        }
+    });
+})();
