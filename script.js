@@ -6294,3 +6294,177 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+/* ============================================================
+   31. CHAT ESTILO WHATSAPP / MESSENGER
+   ------------------------------------------------------------
+   - Auto-scroll al fondo cuando:
+       · Se abre la conversación
+       · Llega un mensaje nuevo
+       · Se envía un mensaje
+       · Se carga una imagen
+       · Se redimensiona el viewport (teclado móvil)
+   - Solo auto-scroll si el usuario está cerca del fondo
+     (no interrumpe si está leyendo mensajes antiguos).
+   - Los mensajes más recientes quedan SIEMPRE abajo.
+   - NO modifica ninguna función existente (secciones 1 a 30).
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+
+    let autoScroll = true;      // true = auto-scroll activo
+    let chatObserver = null;    // observer del contenedor de mensajes
+    let isBound = false;        // evita doble binding
+
+    /* ---------- ¿El usuario está cerca del fondo? ---------- */
+    function isNearBottom(el, threshold) {
+        if (!el) return true;
+        const t = typeof threshold === 'number' ? threshold : 100;
+        return (el.scrollHeight - el.scrollTop - el.clientHeight) <= t;
+    }
+
+    /* ---------- Forzar scroll al fondo (instantáneo) ---------- */
+    function scrollToBottom() {
+        const scroll = $('chat-scroll');
+        if (!scroll) return;
+        try {
+            scroll.scrollTop = scroll.scrollHeight;
+        } catch (_) {}
+    }
+
+    /* ---------- Scroll con múltiples reintentos (por si el DOM tarda) ---------- */
+    function forceScrollWithRetries() {
+        scrollToBottom();
+        requestAnimationFrame(() => {
+            scrollToBottom();
+            requestAnimationFrame(scrollToBottom);
+        });
+        setTimeout(scrollToBottom, 50);
+        setTimeout(scrollToBottom, 150);
+        setTimeout(scrollToBottom, 350);
+        setTimeout(scrollToBottom, 600);
+    }
+
+    /* ---------- Detectar posición manual del usuario ---------- */
+    function bindScrollListener() {
+        const scroll = $('chat-scroll');
+        if (!scroll || scroll.dataset.waScroll === '1') return;
+        scroll.dataset.waScroll = '1';
+        scroll.addEventListener('scroll', () => {
+            autoScroll = isNearBottom(scroll, 120);
+        }, { passive: true });
+    }
+
+    /* ---------- Observar cambios en los mensajes ---------- */
+    function bindMessagesObserver() {
+        const container = $('chat-messages');
+        if (!container || chatObserver) return;
+
+        chatObserver = new MutationObserver(() => {
+            const view = $('chat-view');
+            if (!view || !view.classList.contains('visible')) return;
+            if (!autoScroll) return;   // respeta si el usuario está leyendo arriba
+            forceScrollWithRetries();
+        });
+        chatObserver.observe(container, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    /* ---------- Auto-scroll cuando cargan imágenes ---------- */
+    function bindImageLoader() {
+        const container = $('chat-messages');
+        if (!container || container.dataset.waImgs === '1') return;
+        container.dataset.waImgs = '1';
+
+        container.addEventListener('load', (e) => {
+            if (e.target && e.target.tagName === 'IMG' && autoScroll) {
+                scrollToBottom();
+            }
+        }, true);
+    }
+
+    /* ---------- Auto-scroll cuando cambia el viewport (teclado móvil) ---------- */
+    function bindViewportResize() {
+        const handler = () => {
+            if (autoScroll) setTimeout(scrollToBottom, 80);
+        };
+        window.addEventListener('resize', handler);
+        if (window.visualViewport) {
+            try { window.visualViewport.addEventListener('resize', handler); } catch (_) {}
+        }
+    }
+
+    /* ---------- Auto-scroll al pulsar Enter o botón enviar ---------- */
+    function bindComposer() {
+        const btn = $('chat-send');
+        if (btn && btn.dataset.waSend !== '1') {
+            btn.dataset.waSend = '1';
+            btn.addEventListener('click', () => {
+                autoScroll = true;
+                setTimeout(scrollToBottom, 60);
+                setTimeout(scrollToBottom, 200);
+                setTimeout(scrollToBottom, 450);
+            });
+        }
+        const input = $('chat-input');
+        if (input && input.dataset.waSend !== '1') {
+            input.dataset.waSend = '1';
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    autoScroll = true;
+                    setTimeout(scrollToBottom, 60);
+                    setTimeout(scrollToBottom, 200);
+                    setTimeout(scrollToBottom, 450);
+                }
+            });
+        }
+    }
+
+    /* ---------- Detectar apertura / cierre del chat ---------- */
+    function watchChatView() {
+        const view = $('chat-view');
+        if (!view) { setTimeout(watchChatView, 300); return; }
+        if (view.dataset.waView === '1') return;
+        view.dataset.waView = '1';
+
+        let lastVisible = false;
+        const obs = new MutationObserver(() => {
+            const visible = view.classList.contains('visible');
+            if (visible === lastVisible) return;
+            lastVisible = visible;
+
+            if (visible) {
+                // ---- Chat ABIERTO ----
+                autoScroll = true;
+                bindScrollListener();
+                bindMessagesObserver();
+                bindImageLoader();
+                bindComposer();
+                // Múltiples reintentos: el DOM y las imágenes tardan en pintar
+                forceScrollWithRetries();
+            } else {
+                // ---- Chat CERRADO ----
+                autoScroll = true;   // reset para la próxima apertura
+            }
+        });
+        obs.observe(view, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        if (isBound) return;
+        isBound = true;
+        watchChatView();
+        bindViewportResize();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
