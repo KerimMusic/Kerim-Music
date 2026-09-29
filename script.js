@@ -2956,16 +2956,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!modal) return;
         if (input) input.value = '';
         if (status) { status.textContent = ''; status.classList.remove('ok'); }
-        if (results) results.innerHTML = '<div class="search-empty"><div class="search-empty-sub">Cargando usuarios…</div></div>';
+        // ✅ NUEVO: sin usuarios visibles hasta que el usuario escriba
+        if (results) results.innerHTML = '';
+        if (recentBox) { recentBox.innerHTML = ''; recentBox.style.display = 'none'; }
         modal.classList.add('visible');
         modal.setAttribute('aria-hidden', 'false');
         await cargarCompartidosDePlaylist(playlist);
-        if (recentBox) renderSeguirCompartiendo(recentBox, onPickUser).catch(() => {});
-        cargarUsuariosFirebase().then(users => {
-            renderUserResults(filtrarUsuarios(users, ''), results, onPickUser, '');
-        }).catch(err => {
-            if (results) results.innerHTML = '<div class="search-empty"><div class="search-empty-title">Error</div><div class="search-empty-sub">No se pudieron cargar los usuarios.</div></div>';
-        });
+        // ✅ Precargar la caché de usuarios (sin renderizar nada)
+        cargarUsuariosFirebase().catch(() => {});
     }
 
     function closeShareModal() {
@@ -2991,12 +2989,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 status.textContent = '✓ Dejaste de compartir con ' + u.nombre;
                 status.classList.add('ok');
                 const results = $('share-modal-results');
-                const recentBox = $('share-modal-recent');
                 if (usersCache) {
                     const q = ($('share-modal-input')?.value || '').trim();
-                    renderUserResults(filtrarUsuarios(usersCache, q), results, onPickUser, q);
+                    if (q) renderUserResults(filtrarUsuarios(usersCache, q), results, onPickUser, q);
+                    else if (results) results.innerHTML = '';
                 }
-                if (recentBox) renderSeguirCompartiendo(recentBox, onPickUser).catch(() => {});
                 setTimeout(() => { status.textContent = ''; status.classList.remove('ok'); currentTargetUser = null; }, 1400);
             } catch (err) {
                 status.textContent = err.message || 'No se pudo dejar de compartir.';
@@ -3012,12 +3009,11 @@ document.addEventListener('DOMContentLoaded', () => {
             status.textContent = '✓ Playlist compartida con ' + u.nombre;
             status.classList.add('ok');
             const results = $('share-modal-results');
-            const recentBox = $('share-modal-recent');
             if (usersCache) {
                 const q = ($('share-modal-input')?.value || '').trim();
-                renderUserResults(filtrarUsuarios(usersCache, q), results, onPickUser, q);
+                if (q) renderUserResults(filtrarUsuarios(usersCache, q), results, onPickUser, q);
+                else if (results) results.innerHTML = '';
             }
-            if (recentBox) renderSeguirCompartiendo(recentBox, onPickUser).catch(() => {});
             setTimeout(() => { status.textContent = ''; status.classList.remove('ok'); currentTargetUser = null; }, 1600);
         } catch (err) {
             status.textContent = err.message || 'No se pudo compartir la playlist.';
@@ -3114,12 +3110,11 @@ document.addEventListener('DOMContentLoaded', () => {
             input.addEventListener('input', () => {
                 const q = input.value.trim();
                 if (debounceTimer) clearTimeout(debounceTimer);
-                if (recentBox) recentBox.style.display = q ? 'none' : '';
+                // ✅ Ocultar siempre la sección de recientes dentro del buscador
+                if (recentBox) { recentBox.innerHTML = ''; recentBox.style.display = 'none'; }
                 if (!q) {
-                    if (recentBox) renderSeguirCompartiendo(recentBox, onPickUser).catch(() => {});
-                    cargarUsuariosFirebase().then(users => {
-                        renderUserResults(filtrarUsuarios(users, ''), results, onPickUser, '');
-                    }).catch(() => {});
+                    // ✅ Vacío: no mostrar usuarios hasta que escriba
+                    if (results) results.innerHTML = '';
                     return;
                 }
                 if (usersCache) renderUserResults(filtrarUsuarios(usersCache, q), results, onPickUser, q);
@@ -3949,15 +3944,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    24. MENSAJES DIRECTOS
-   ------------------------------------------------------------
-   - Icono "Mensaje" en el reproductor a pantalla completa
-   - Sección "Mensajes" en el menú (con badge de no leídos)
-   - Chat con envío de texto + canción adjunta
-   - Buscador de usuarios por nombre o correo
-   - Firebase:
-       conversaciones/{uid1__uid2}
-       conversaciones/{uid1__uid2}/mensajes/{msgId}
-   - No modifica ninguna sección existente
    ============================================================ */
 (function () {
     'use strict';
@@ -4455,13 +4441,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const input = $('newmsg-input');
         if (input) input.value = '';
         const list = $('newmsg-list');
-        if (list) list.innerHTML = '<div class="newmsg-loading">Cargando usuarios…</div>';
-        try {
-            const users = await loadAllUsers();
-            renderNewMessageList(filterUsers(users, ''));
-        } catch (e) {
-            if (list) list.innerHTML = '<div class="newmsg-empty">No se pudieron cargar los usuarios</div>';
-        }
+        // ✅ NUEVO: mensaje de ayuda en lugar de listar usuarios
+        if (list) list.innerHTML = '<div class="newmsg-empty">Escribe un nombre o correo para buscar</div>';
+        // ✅ Precargar caché (sin renderizar nada)
+        loadAllUsers().catch(() => {});
     }
 
     function renderNewMessageList(users) {
@@ -4590,10 +4573,17 @@ document.addEventListener('DOMContentLoaded', () => {
             let deb = null;
             newmsgInput.addEventListener('input', () => {
                 if (deb) clearTimeout(deb);
+                const q = newmsgInput.value.trim();
+                if (!q) {
+                    // ✅ Vacío: no mostrar usuarios hasta que escriba
+                    const list = $('newmsg-list');
+                    if (list) list.innerHTML = '<div class="newmsg-empty">Escribe un nombre o correo para buscar</div>';
+                    return;
+                }
                 deb = setTimeout(async () => {
                     try {
                         const users = await loadAllUsers();
-                        renderNewMessageList(filterUsers(users, newmsgInput.value));
+                        renderNewMessageList(filterUsers(users, q));
                     } catch (e) {}
                 }, 100);
             });
@@ -4666,12 +4656,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    25. REFUERZO: Refresco directo de la lista de conversaciones
-   ------------------------------------------------------------
-   Al abrir "Mensajes", hace una consulta directa (get) a
-   Firestore y renderiza la lista, aunque el listener en tiempo
-   real de la sección 24 no se haya disparado todavía o haya
-   fallado silenciosamente por reglas de seguridad.
-   No modifica nada existente.
    ============================================================ */
 (function () {
     'use strict';
@@ -4836,19 +4820,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 })();
+
 /* ============================================================
    26. NOTIFICACIONES DE MENSAJES (badge + historial persistente)
-   ------------------------------------------------------------
-   Refuerza lo existente SIN modificar nada:
-   - Contador de no leídos junto a "Mensajes" en el menú.
-   - Se actualiza en tiempo real con Firestore.
-   - Desaparece cuando no hay mensajes pendientes.
-   - Marca la conversación abierta como leída al recibir
-     mensajes nuevos (aunque el chat ya esté abierto).
-   - Refresca el contador al volver a la app.
-   - Refresca al abrir la vista "Mensajes".
-   - 👇 MODIFICADO: Ahora dispara notificación nativa a Android
-     cuando llega un mensaje nuevo mientras la app está abierta.
    ============================================================ */
 (function () {
     'use strict';
@@ -4874,7 +4848,6 @@ document.addEventListener('DOMContentLoaded', () => {
             badge.textContent   = n > 99 ? '99+' : String(n);
         }
 
-        // Refuerzo visual: si cambia de >0 a 0, animar brevemente
         if (lastUnread > 0 && n === 0) {
             badge.style.display = 'none';
         }
@@ -4917,7 +4890,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const unread = (d.noLeidos && d.noLeidos[currentUid]) || 0;
                     total += unread;
                     
-                    // Extraer información del último mensaje para la notificación
                     if (unread > 0) {
                         const otherUid = (d.participantes || []).find(u => u !== currentUid);
                         const info = (d.info && d.info[otherUid]) || {};
@@ -4929,9 +4901,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 });
 
-                // 👇 INICIO DE LA MODIFICACIÓN: Disparar notificación a Android
                 if (total > lastUnread && lastUnread > 0 && lastMsgInfo) {
-                    // Verificar si el usuario ya está viendo el chat de esa persona
                     const chatView = $('chat-view');
                     const usernameEl = $('chat-username');
                     let isChatOpen = false;
@@ -4939,12 +4909,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (chatView && chatView.classList.contains('visible') && usernameEl) {
                         const activeName = (usernameEl.textContent || '').trim().toLowerCase();
                         if (activeName && lastMsgInfo.nombre.toLowerCase() === activeName) {
-                            isChatOpen = true; // Ya está en el chat, no notificar
+                            isChatOpen = true;
                         }
                     }
 
                     if (!isChatOpen) {
-                        // Intentar con NativeBridge (el que configuramos) o AndroidBridge (el que ya tenías)
                         var bridge = window.NativeBridge || window.AndroidBridge;
                         if (bridge && typeof bridge.avisarMensajeNuevo === 'function') {
                             try {
@@ -4953,11 +4922,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                 }
-                // 👆 FIN DE LA MODIFICACIÓN
 
                 paintBadge(total);
 
-                // Si el usuario tiene un chat abierto, marcarlo leído
                 if (total > 0) markOpenConversationRead();
             }, err => {
                 console.warn('[MSG-NOTIF] Listener falló:', err && err.code);
@@ -5000,7 +4967,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (tasks.length) {
                 await Promise.all(tasks);
-                // El listener de tiempo real actualizará el badge automáticamente
             }
         } catch (e) {
             // silencioso
@@ -5009,7 +4975,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /* ---------- Observadores de vistas ---------- */
     function watchViews() {
-        // Al abrir "chat-view": marcar leído tras un instante
         const chatView = $('chat-view');
         if (chatView && chatView.dataset.badgeWatch !== '1') {
             chatView.dataset.badgeWatch = '1';
@@ -5022,7 +4987,6 @@ document.addEventListener('DOMContentLoaded', () => {
             obs.observe(chatView, { attributes: true, attributeFilter: ['class'] });
         }
 
-        // Al abrir "mensajes-view": recomputar el badge
         const mensajesView = $('mensajes-view');
         if (mensajesView && mensajesView.dataset.badgeWatch !== '1') {
             mensajesView.dataset.badgeWatch = '1';
@@ -5034,7 +4998,6 @@ document.addEventListener('DOMContentLoaded', () => {
             obs.observe(mensajesView, { attributes: true, attributeFilter: ['class'] });
         }
 
-        // Al abrir el menú hamburguesa: recomputar (por si acaso)
         const submenu = $('submenu');
         if (submenu && submenu.dataset.badgeWatch !== '1') {
             submenu.dataset.badgeWatch = '1';
@@ -5057,22 +5020,20 @@ document.addEventListener('DOMContentLoaded', () => {
         firebase.auth().onAuthStateChanged(user => {
             currentUid = user ? user.uid : null;
             if (user) {
-                listenBadge();          // tiempo real
-                computeAndPaintBadge(); // inmediato (por si el listener tarda)
+                listenBadge();
+                computeAndPaintBadge();
             } else {
                 if (unsubBadge) { unsubBadge(); unsubBadge = null; }
                 paintBadge(0);
             }
         });
 
-        // Refrescar al volver a la app
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 computeAndPaintBadge();
             }
         });
 
-        // Refrescar también al recuperar foco
         window.addEventListener('focus', () => computeAndPaintBadge());
 
         watchViews();
@@ -5084,13 +5045,9 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+
 /* ============================================================
    27. ELIMINAR / LIMPIAR CONVERSACIONES (long-press 2s)
-   ------------------------------------------------------------
-   - Mantener presionada una conversación 2 seg → menú con:
-       · Eliminar  → borra SOLO esa conversación de Firebase.
-       · Limpiar tu ventana → modo selección múltiple.
-   - NO modifica ni interfiere con las secciones 24 / 25 / 26.
    ============================================================ */
 (function () {
     'use strict';
@@ -5107,9 +5064,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let assignTimer = null;
 
-    /* ---------------------------------------------------------
-       Utilidades
-       --------------------------------------------------------- */
     function haptic(ms) {
         if (navigator.vibrate) { try { navigator.vibrate(ms || 15); } catch (_) {} }
     }
@@ -5119,9 +5073,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }[c]));
     }
 
-    /* ---------------------------------------------------------
-       Estilos inyectados (aislados, no alteran CSS existente)
-       --------------------------------------------------------- */
     const style = document.createElement('style');
     style.id = 'conv-clean-styles';
     style.textContent = `
@@ -5183,7 +5134,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         .conv-menu-cancel:active { background: #262626; }
 
-        /* Modo selección */
         .msg-row.selecting { padding-left: 52px !important; }
         .msg-row .msg-row-select {
             position: absolute; left: 14px; top: 50%;
@@ -5210,7 +5160,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         .msg-row.selecting { cursor: pointer; }
 
-        /* Barra inferior */
         .conv-clean-bar {
             position: absolute;
             left: 0; right: 0; bottom: 0;
@@ -5244,7 +5193,6 @@ document.addEventListener('DOMContentLoaded', () => {
         .conv-clean-btn.confirm:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
         .conv-clean-btn:active:not(:disabled) { transform: scale(0.95); }
 
-        /* Confirmación */
         .conv-confirm-box {
             width: 100%; max-width: 340px;
             background: #141414;
@@ -5273,9 +5221,6 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     if (!document.getElementById('conv-clean-styles')) document.head.appendChild(style);
 
-    /* ---------------------------------------------------------
-       Mapear filas → convId de Firestore
-       --------------------------------------------------------- */
     async function assignConvIdsToRows() {
         const user = firebase.auth().currentUser;
         if (!user) return;
@@ -5335,9 +5280,6 @@ document.addEventListener('DOMContentLoaded', () => {
         assignTimer = setTimeout(assignConvIdsToRows, 120);
     }
 
-    /* ---------------------------------------------------------
-       Modales
-       --------------------------------------------------------- */
     function closeMenu() {
         if (activeMenu && activeMenu.parentNode) activeMenu.parentNode.removeChild(activeMenu);
         activeMenu = null;
@@ -5425,14 +5367,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    /* ---------------------------------------------------------
-       Borrado en Firestore
-       --------------------------------------------------------- */
     async function deleteConversations(convIds) {
         const tasks = convIds.map(id => (async () => {
             try {
                 const ref = firebase.firestore().collection('conversaciones').doc(id);
-                // 1) Borrar subcolección mensajes (por lotes)
                 try {
                     const msgs = await ref.collection('mensajes').limit(500).get();
                     if (!msgs.empty) {
@@ -5440,8 +5378,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         msgs.forEach(m => batch.delete(m.ref));
                         await batch.commit();
                     }
-                } catch (e) { /* puede no existir */ }
-                // 2) Borrar documento principal
+                } catch (e) { }
                 await ref.delete();
             } catch (e) {
                 console.warn('[CONV-CLEAN] Error al eliminar', id, e);
@@ -5450,9 +5387,6 @@ document.addEventListener('DOMContentLoaded', () => {
         await Promise.all(tasks);
     }
 
-    /* ---------------------------------------------------------
-       Modo selección ("Limpiar tu ventana")
-       --------------------------------------------------------- */
     function enterSelectionMode() {
         const view = $('mensajes-view');
         const list = $('msg-list');
@@ -5520,7 +5454,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 async () => {
                     exitSelectionMode();
                     await deleteConversations(ids);
-                    // Refresco optimista por si el listener tarda
                     const list = $('msg-list');
                     if (list) {
                         list.querySelectorAll('.msg-row').forEach(r => {
@@ -5557,9 +5490,6 @@ document.addEventListener('DOMContentLoaded', () => {
         haptic(8);
     }
 
-    /* ---------------------------------------------------------
-       Handlers de la lista
-       --------------------------------------------------------- */
     function handleRowClickCapture(e) {
         const row = e.target.closest('.msg-row');
         if (!row) return;
@@ -5606,7 +5536,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             showConvMenu(
                 row,
-                /* Eliminar solo esta */
                 () => {
                     const name = row.dataset.otherName || 'esta conversación';
                     showConfirm(
@@ -5619,7 +5548,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     );
                 },
-                /* Limpiar tu ventana */
                 () => { enterSelectionMode(); }
             );
         }, LONG_PRESS_MS);
@@ -5646,9 +5574,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
     }
 
-    /* ---------------------------------------------------------
-       Observadores y arranque
-       --------------------------------------------------------- */
     function observeMsgList() {
         const list = $('msg-list');
         if (!list) { setTimeout(observeMsgList, 300); return; }
@@ -5668,7 +5593,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             });
             if (changed) {
-                // Si llega una nueva fila mientras estamos en selección, aplicarle el modo
                 if (selectionMode) {
                     list.querySelectorAll('.msg-row').forEach(row => {
                         if (!row.classList.contains('selecting')) {
@@ -5686,7 +5610,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         obs.observe(list, { childList: true, subtree: true });
 
-        // Re-mapear al abrir la vista
         const view = $('mensajes-view');
         if (view && view.dataset.convCleanView !== '1') {
             view.dataset.convCleanView = '1';
@@ -5703,7 +5626,6 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(assignConvIdsToRows, 200);
     }
 
-    /* ESC cierra menú / confirmación / modo selección primero */
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
         if (activeMenu) {
@@ -5731,6 +5653,7 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+
 /* ============================================================
    28. TOKEN FCM → Guardar en Firestore
    ============================================================ */
@@ -5761,4 +5684,613 @@ document.addEventListener('DOMContentLoaded', () => {
             window.__pendingFCMToken = null;
         }
     });
+})();
+/* ============================================================
+   29. EDITAR / PERSONALIZAR NOMBRE DE USUARIO
+   ------------------------------------------------------------
+   - Modal accesible desde el menú lateral ("Editar nombre").
+   - Valida longitud, caracteres y disponibilidad en Firestore.
+   - Comprueba duplicados contra toda la colección historial_usuarios.
+   - Guarda en:
+       · historial_usuarios/{uid}.nombre
+       · historial_usuarios/{uid}.nombre_lower (para búsquedas rápidas)
+       · user.updateProfile({ displayName })  → Auth de Firebase
+       · info.{uid}.nombre  → en todas las conversaciones del usuario
+   - Actualiza la UI inmediatamente (menú lateral, inputs, etc.).
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+
+    let usersCacheForNames = null;
+    let usersLoadingPromise = null;
+    let currentName = '';
+    let checkToken = 0;
+
+    /* ---------- Normalización ---------- */
+    function normalizeName(str) {
+        return String(str || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /* ---------- Validación local ---------- */
+    function validateName(name) {
+        const trimmed = String(name || '').trim();
+        if (!trimmed)                       return { ok: false, msg: 'Escribe un nombre.' };
+        if (trimmed.length < 3)             return { ok: false, msg: 'Mínimo 3 caracteres.' };
+        if (trimmed.length > 30)            return { ok: false, msg: 'Máximo 30 caracteres.' };
+        const validRegex = /^[\p{L}\p{N}\s._\-]+$/u;
+        if (!validRegex.test(trimmed)) {
+            return { ok: false, msg: 'Solo letras, números, espacios, . _ -' };
+        }
+        return { ok: true, value: trimmed };
+    }
+
+    /* ---------- Caché de usuarios ---------- */
+    async function loadAllUsersForNames() {
+        if (usersCacheForNames) return usersCacheForNames;
+        if (usersLoadingPromise) return usersLoadingPromise;
+        usersLoadingPromise = (async () => {
+            const snap = await firebase.firestore()
+                .collection('historial_usuarios').limit(1500).get();
+            const users = [];
+            snap.forEach(doc => {
+                const d = doc.data() || {};
+                const nombre = d.nombre || d.name || d.displayName || '';
+                const nombreLower = d.nombre_lower || normalizeName(nombre);
+                users.push({ uid: doc.id, nombre, nombreLower });
+            });
+            usersCacheForNames = users;
+            return users;
+        })().catch(err => { usersLoadingPromise = null; throw err; });
+        return usersLoadingPromise;
+    }
+
+    /* ---------- Disponibilidad del nombre ---------- */
+    async function isNameAvailable(name) {
+        const user = firebase.auth().currentUser;
+        if (!user) return false;
+        const target = normalizeName(name);
+        if (!target) return false;
+
+        try {
+            const snap = await firebase.firestore()
+                .collection('historial_usuarios')
+                .where('nombre_lower', '==', target)
+                .limit(5)
+                .get();
+            let taken = false;
+            snap.forEach(doc => { if (doc.id !== user.uid) taken = true; });
+            if (taken) return false;
+            if (!snap.empty) return true;
+        } catch (e) { /* fallback */ }
+
+        try {
+            const users = await loadAllUsersForNames();
+            for (const u of users) {
+                if (u.uid === user.uid) continue;
+                const cmp = u.nombreLower || normalizeName(u.nombre);
+                if (cmp === target) return false;
+            }
+        } catch (e) { /* silencioso */ }
+
+        return true;
+    }
+
+    /* ---------- UI helpers ---------- */
+    function updateStatus(msg, type) {
+        const status = $('name-modal-status');
+        if (!status) return;
+        status.textContent = msg || '';
+        status.classList.remove('ok', 'error', 'checking');
+        if (type === 'ok')            status.classList.add('ok');
+        else if (type === 'error')    status.classList.add('error');
+        else if (type === 'checking') status.classList.add('checking');
+    }
+    function setSaveEnabled(enabled) {
+        const btn = $('name-modal-confirm');
+        if (btn) btn.disabled = !enabled;
+    }
+
+    /* ---------- Comprobación con debounce ---------- */
+    async function checkAndValidate(name) {
+        const token = ++checkToken;
+        const validation = validateName(name);
+        if (!validation.ok) {
+            updateStatus(validation.msg, 'error');
+            setSaveEnabled(false);
+            return;
+        }
+        const trimmed = validation.value;
+        if (normalizeName(trimmed) === normalizeName(currentName)) {
+            updateStatus('Es tu nombre actual.', 'error');
+            setSaveEnabled(false);
+            return;
+        }
+        updateStatus('Comprobando disponibilidad…', 'checking');
+        setSaveEnabled(false);
+        try {
+            const available = await isNameAvailable(trimmed);
+            if (token !== checkToken) return;
+            if (!available) {
+                updateStatus('❌ Ese nombre no está disponible.', 'error');
+                setSaveEnabled(false);
+            } else {
+                updateStatus('✅ Nombre disponible.', 'ok');
+                setSaveEnabled(true);
+            }
+        } catch (e) {
+            updateStatus('Error al verificar. Intenta de nuevo.', 'error');
+            setSaveEnabled(false);
+        }
+    }
+
+    /* ---------- Abrir / cerrar modal ---------- */
+    function openModal() {
+        const modal = $('name-modal');
+        const input = $('name-modal-input');
+        if (!modal || !input) return;
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+
+        const nombreEl = $('submenu-user-name');
+        currentName = (nombreEl ? nombreEl.textContent : '').trim() || '';
+        if (!currentName || currentName === 'Cargando usuario...') {
+            currentName = user.displayName || (user.email ? user.email.split('@')[0] : '') || '';
+        }
+
+        input.value = currentName;
+        updateStatus('', '');
+        setSaveEnabled(false);
+
+        modal.classList.add('visible');
+        modal.setAttribute('aria-hidden', 'false');
+        setTimeout(() => { input.focus(); input.select(); }, 180);
+    }
+
+    function closeModal() {
+        const modal = $('name-modal');
+        if (!modal) return;
+        modal.classList.remove('visible');
+        modal.setAttribute('aria-hidden', 'true');
+        setSaveEnabled(false);
+        updateStatus('', '');
+    }
+
+    /* ---------- Guardado ---------- */
+    async function saveName() {
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+        const input = $('name-modal-input');
+        const confirmBtn = $('name-modal-confirm');
+        if (!input) return;
+
+        const validation = validateName(input.value);
+        if (!validation.ok) {
+            updateStatus(validation.msg, 'error');
+            return;
+        }
+        const newName = validation.value;
+
+        if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Guardando…'; }
+        updateStatus('Guardando…', 'checking');
+
+        try {
+            const nombreLower = normalizeName(newName);
+
+            const available = await isNameAvailable(newName);
+            if (!available) {
+                updateStatus('❌ Ese nombre no está disponible.', 'error');
+                if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; }
+                return;
+            }
+
+            try {
+                await user.updateProfile({ displayName: newName });
+            } catch (e) { console.warn('No se pudo actualizar displayName:', e); }
+
+            await firebase.firestore()
+                .collection('historial_usuarios')
+                .doc(user.uid)
+                .set({ nombre: newName, nombre_lower: nombreLower }, { merge: true });
+
+            try {
+                const convSnap = await firebase.firestore()
+                    .collection('conversaciones')
+                    .where('participantes', 'array-contains', user.uid)
+                    .get();
+                const tasks = [];
+                convSnap.forEach(doc => {
+                    tasks.push(
+                        doc.ref.update({ ['info.' + user.uid + '.nombre']: newName })
+                            .catch(() => {})
+                    );
+                });
+                if (tasks.length) await Promise.all(tasks);
+            } catch (e) { console.warn('No se pudieron actualizar conversaciones:', e); }
+
+            applyNewNameEverywhere(newName);
+
+            usersCacheForNames = null;
+            usersLoadingPromise = null;
+            try { loadAllUsersForNames(); } catch (_) {}
+
+            updateStatus('✅ Nombre actualizado.', 'ok');
+            setTimeout(closeModal, 900);
+
+        } catch (e) {
+            console.error('Error al guardar nombre:', e);
+            updateStatus('Error al guardar. Intenta de nuevo.', 'error');
+        } finally {
+            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; }
+        }
+    }
+
+    /* ---------- Aplicar el nuevo nombre en la UI ---------- */
+    function applyNewNameEverywhere(newName) {
+        const sideEl = $('submenu-user-name');
+        if (sideEl) sideEl.textContent = newName;
+
+        const modalInput = $('name-modal-input');
+        if (modalInput) modalInput.value = newName;
+
+        currentName = newName;
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) { setTimeout(init, 300); return; }
+
+        const link     = $('edit-name-link');
+        const modal    = $('name-modal');
+        const input    = $('name-modal-input');
+        const closeBtn = $('name-modal-close');
+        const cancel   = $('name-modal-cancel');
+        const backdrop = $('name-modal-backdrop');
+        const confirm  = $('name-modal-confirm');
+        if (!modal || !input || !confirm) { setTimeout(init, 300); return; }
+
+        if (link && link.dataset.editNameReady !== '1') {
+            link.dataset.editNameReady = '1';
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const sm = $('submenu');
+                const so = $('submenu-overlay');
+                if (sm) sm.classList.remove('visible');
+                if (so) so.classList.remove('visible');
+                setTimeout(openModal, 120);
+            });
+        }
+        if (closeBtn && closeBtn.dataset.editNameReady !== '1') {
+            closeBtn.dataset.editNameReady = '1';
+            closeBtn.addEventListener('click', closeModal);
+        }
+        if (cancel && cancel.dataset.editNameReady !== '1') {
+            cancel.dataset.editNameReady = '1';
+            cancel.addEventListener('click', closeModal);
+        }
+        if (backdrop && backdrop.dataset.editNameReady !== '1') {
+            backdrop.dataset.editNameReady = '1';
+            backdrop.addEventListener('click', closeModal);
+        }
+        if (confirm && confirm.dataset.editNameReady !== '1') {
+            confirm.dataset.editNameReady = '1';
+            confirm.addEventListener('click', saveName);
+        }
+        if (input.dataset.editNameReady !== '1') {
+            input.dataset.editNameReady = '1';
+            let deb = null;
+            input.addEventListener('input', () => {
+                if (deb) clearTimeout(deb);
+                const val = input.value;
+                deb = setTimeout(() => checkAndValidate(val), 320);
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (!confirm.disabled) saveName();
+                }
+            });
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('visible')) {
+                e.stopPropagation();
+                closeModal();
+            }
+        }, true);
+
+        loadAllUsersForNames().catch(() => {});
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+/* ============================================================
+   30. ESTADO "VISTO" EN MENSAJES (versión corregida)
+   ------------------------------------------------------------
+   Cómo funciona:
+   - El EMISOR escribe un mensaje → se guarda SIN campo "visto".
+   - El RECEPTOR abre el chat → se marcan como "visto: true"
+     todos los mensajes que NO son suyos (batch update).
+   - El EMISOR ve "✓✓ Visto" debajo de la hora SOLO cuando
+     el campo "visto" del mensaje es true en Firestore.
+   - Se actualiza en tiempo real con Firestore onSnapshot.
+   - No interfiere con la sección 24 (listener propio, no lo toca).
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+
+    let currentConvId    = null;
+    let currentOtherUid  = null;
+    let unsubSeen        = null;   // listener de mensajes
+    let chatDomObserver  = null;   // observer del DOM del chat
+    let lastMessagesData = [];     // cache de los últimos mensajes vistos
+    let isMarking        = false;  // evita re-entradas al marcar como visto
+    let applyTimer       = null;   // debounce para aplicar marcas
+
+    /* ---------- Normalizar nombre ---------- */
+    function normalizeName(s) {
+        return String(s || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .trim();
+    }
+
+    /* ---------- Construir convId ---------- */
+    function makeConvId(a, b) {
+        return [a, b].sort().join('__');
+    }
+
+    /* ---------- Buscar uid del otro usuario por nombre ---------- */
+    async function findUidByName(name) {
+        if (!name) return null;
+        try {
+            const snap = await firebase.firestore()
+                .collection('historial_usuarios').limit(1500).get();
+            const target = normalizeName(name);
+            for (const doc of snap.docs) {
+                const d = doc.data() || {};
+                const n = normalizeName(d.nombre || d.name || d.displayName || '');
+                if (n && n === target) return doc.id;
+            }
+        } catch (e) { console.warn('[VISTO] Error buscando usuario:', e); }
+        return null;
+    }
+
+    /* ---------- Marcar como vistos los mensajes AJENOS (del otro) ---------- */
+    async function markOthersAsSeen() {
+        const user = firebase.auth().currentUser;
+        if (!user || !currentConvId || isMarking) return;
+        isMarking = true;
+        try {
+            const msgsRef = firebase.firestore()
+                .collection('conversaciones').doc(currentConvId)
+                .collection('mensajes');
+            const snap = await msgsRef.get();
+            if (snap.empty) { isMarking = false; return; }
+
+            const batch = firebase.firestore().batch();
+            let count = 0;
+            snap.forEach(doc => {
+                const d = doc.data() || {};
+                // Solo los mensajes que NO son míos y que aún no están vistos
+                if (d.de !== user.uid && d.visto !== true) {
+                    batch.update(doc.ref, { visto: true });
+                    count++;
+                }
+            });
+            if (count > 0) {
+                await batch.commit();
+                console.log('[VISTO] ' + count + ' mensajes marcados como vistos');
+            }
+        } catch (e) {
+            console.warn('[VISTO] Error al marcar como visto:', e);
+        } finally {
+            isMarking = false;
+        }
+    }
+
+    /* ---------- Aplicar / quitar la marca "✓✓ Visto" en el DOM ---------- */
+    function applySeenMarks() {
+        const container = $('chat-messages');
+        const user = firebase.auth().currentUser;
+        if (!container || !user) return;
+
+        // Filas de MIS mensajes (out) y de los del otro (in) en orden cronológico
+        const outRows = Array.from(container.querySelectorAll('.chat-row--out'));
+        if (!outRows.length) return;
+
+        // Mis mensajes (según Firestore)
+        const myMsgs = lastMessagesData.filter(m => m.de === user.uid);
+
+        // Emparejar desde el final: el último mensaje del DOM con el último de Firestore
+        // Esto es más fiable que el match por texto, porque respeta el orden.
+        const total = Math.min(outRows.length, myMsgs.length);
+        for (let i = 0; i < total; i++) {
+            const row = outRows[outRows.length - 1 - i];
+            const msg = myMsgs[myMsgs.length - 1 - i];
+            if (!row || !msg) continue;
+
+            const bubble = row.querySelector('.chat-bubble');
+            if (!bubble) continue;
+
+            // Verificación cruzada por texto para evitar falsos positivos
+            // (si hay discrepancias, probamos coincidencia por canción)
+            const txtEl = bubble.querySelector('.chat-bubble-text');
+            const bubbleText = (txtEl ? txtEl.textContent : '').trim();
+            const msgText = (msg.texto || '').trim();
+            const bubbleHasSong = !!bubble.querySelector('.chat-bubble-song');
+            const msgHasSong = !!(msg.cancion && msg.cancion.audioUrl);
+
+            const textMatches = !bubbleText && !msgText ? true : bubbleText === msgText;
+            const songMatches = bubbleHasSong === msgHasSong;
+
+            if (!textMatches && !songMatches) continue;
+
+            let mark = bubble.querySelector('.chat-seen-mark');
+            if (msg.visto === true) {
+                if (!mark) {
+                    mark = document.createElement('div');
+                    mark.className = 'chat-seen-mark';
+                    bubble.appendChild(mark);
+                }
+                mark.textContent = '✓✓ Visto';
+            } else {
+                if (mark) mark.remove();
+            }
+        }
+    }
+
+    function scheduleApplySeenMarks(delay) {
+        if (applyTimer) clearTimeout(applyTimer);
+        applyTimer = setTimeout(() => {
+            applyTimer = null;
+            applySeenMarks();
+        }, delay || 60);
+    }
+
+    /* ---------- Listener de mensajes de la conversación actual ---------- */
+    function listenMessagesForSeen() {
+        if (unsubSeen) { unsubSeen(); unsubSeen = null; }
+        if (!currentConvId) return;
+
+        unsubSeen = firebase.firestore()
+            .collection('conversaciones').doc(currentConvId)
+            .collection('mensajes')
+            .orderBy('fecha', 'asc')
+            .onSnapshot(snap => {
+                const user = firebase.auth().currentUser;
+                if (!user) return;
+
+                const arr = [];
+                const toMark = [];
+
+                snap.forEach(doc => {
+                    const d = doc.data() || {};
+                    arr.push({
+                        id: doc.id,
+                        de: d.de,
+                        texto: d.texto || '',
+                        cancion: d.cancion || null,
+                        visto: d.visto === true
+                    });
+                    // Los mensajes que NO son míos y aún no están vistos → marcar
+                    if (d.de !== user.uid && d.visto !== true) {
+                        toMark.push(doc.ref);
+                    }
+                });
+
+                lastMessagesData = arr;
+
+                // Aplicar marcas al DOM (con pequeños delays para que el DOM se haya pintado)
+                scheduleApplySeenMarks(50);
+                scheduleApplySeenMarks(250);
+
+                // Marcar como vistos los ajenos (si los hay)
+                if (toMark.length > 0) {
+                    const batch = firebase.firestore().batch();
+                    toMark.forEach(ref => batch.update(ref, { visto: true }));
+                    batch.commit().catch(() => {});
+                }
+            }, err => {
+                console.warn('[VISTO] Listener error:', err);
+            });
+    }
+
+    /* ---------- Observar el DOM del chat para re-aplicar marcas ---------- */
+    function observeChatDom() {
+        const container = $('chat-messages');
+        if (!container || chatDomObserver) return;
+
+        chatDomObserver = new MutationObserver(() => {
+            if (!currentConvId) return;
+            // Cuando la sección 24 re-renderiza los mensajes, re-aplicamos las marcas
+            scheduleApplySeenMarks(60);
+        });
+        chatDomObserver.observe(container, { childList: true, subtree: true });
+    }
+
+    /* ---------- Detectar apertura / cierre del chat ---------- */
+    function watchChatView() {
+        const chatView = $('chat-view');
+        if (!chatView) { setTimeout(watchChatView, 300); return; }
+        if (chatView.dataset.seenWatch === '1') return;
+        chatView.dataset.seenWatch = '1';
+
+        let lastVisible = false;
+
+        const obs = new MutationObserver(async () => {
+            const visible = chatView.classList.contains('visible');
+            if (visible === lastVisible) return;
+            lastVisible = visible;
+
+            if (visible) {
+                // ---- Chat ABIERTO ----
+                const user = firebase.auth().currentUser;
+                if (!user) return;
+
+                const nameEl = $('chat-username');
+                const otherName = (nameEl ? nameEl.textContent : '').trim();
+                if (!otherName || otherName === 'Usuario') return;
+
+                const uid = await findUidByName(otherName);
+                if (!uid) return;
+
+                currentOtherUid = uid;
+                currentConvId = makeConvId(user.uid, uid);
+
+                console.log('[VISTO] Chat abierto con "' + otherName + '" → convId:', currentConvId);
+
+                // 1) Marcar como vistos los mensajes ajenos pendientes
+                await markOthersAsSeen();
+
+                // 2) Escuchar cambios para aplicar marcas en mis mensajes
+                listenMessagesForSeen();
+
+                // 3) Observar el DOM para re-aplicar marcas cuando se re-renderice
+                observeChatDom();
+
+                // 4) Reintentos por si el DOM tarda en pintarse
+                scheduleApplySeenMarks(200);
+                scheduleApplySeenMarks(600);
+                scheduleApplySeenMarks(1200);
+
+            } else {
+                // ---- Chat CERRADO ----
+                if (unsubSeen) { unsubSeen(); unsubSeen = null; }
+                currentConvId = null;
+                currentOtherUid = null;
+                lastMessagesData = [];
+            }
+        });
+        obs.observe(chatView, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+        watchChatView();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
