@@ -6468,3 +6468,327 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+/* ============================================================
+   32. PRIVACIDAD DEL CORREO
+   ------------------------------------------------------------
+   - Agrega un selector "Público / Privado" dentro del modal
+     "Editar nombre" (sin modificar el HTML existente: se
+     inyecta dinámicamente).
+   - Guarda el campo `email_privado` en Firestore:
+       · false → correo visible para otros usuarios
+       · true  → correo oculto para otros usuarios
+   - Persiste al cerrar sesión / volver a entrar.
+   - Oculta el correo en TODOS los buscadores de usuarios
+     (compartir playlist y nuevo mensaje) cuando el usuario
+     lo tenga en privado.
+   - NO modifica ninguna función existente (secciones 1 a 31).
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+
+    // Cache local: uid → { email, privado }
+    let privacyCache = new Map();
+    let cacheLoading = null;
+    let privacidadActual = false; // del usuario actual
+
+    /* ---------- Cargar cache de privacidad de todos los usuarios ---------- */
+    async function cargarCachePrivacidad(force) {
+        if (!force && privacyCache.size > 0) return privacyCache;
+        if (cacheLoading && !force) return cacheLoading;
+        cacheLoading = (async () => {
+            try {
+                const snap = await firebase.firestore()
+                    .collection('historial_usuarios').limit(2000).get();
+                privacyCache = new Map();
+                snap.forEach(doc => {
+                    const d = doc.data() || {};
+                    const email = (d.email || '').toLowerCase();
+                    if (email) {
+                        privacyCache.set(email, {
+                            uid: doc.id,
+                            privado: d.email_privado === true
+                        });
+                    }
+                });
+            } catch (e) {
+                console.warn('[PRIVACIDAD] Error cargando cache:', e);
+            } finally {
+                cacheLoading = null;
+            }
+            return privacyCache;
+        })();
+        return cacheLoading;
+    }
+
+    /* ---------- Ocultar correos privados en un contenedor ---------- */
+    function ocultarEmailsPrivados(root) {
+        if (!root) return;
+
+        // 1) Compartir playlist (.share-user-sub) — contiene "email" o "Texto · email"
+        root.querySelectorAll('.share-user-row').forEach(row => {
+            const sub = row.querySelector('.share-user-sub');
+            if (!sub) return;
+            const original = sub.textContent || '';
+            const textoNorm = original.toLowerCase();
+
+            let modificado = original;
+            privacyCache.forEach((info, email) => {
+                if (info.privado && email && textoNorm.includes(email)) {
+                    modificado = modificado.replace(new RegExp(email, 'gi'), '🔒 Correo privado');
+                }
+            });
+            if (modificado !== original) {
+                sub.innerHTML = modificado
+                    .replace(/🔒 Correo privado/g, '<span class="email-hidden-badge">🔒 Correo privado</span>');
+            }
+        });
+
+        // 2) Nuevo mensaje (.newmsg-row-email) — solo el email
+        root.querySelectorAll('.newmsg-row').forEach(row => {
+            const emailEl = row.querySelector('.newmsg-row-email');
+            if (!emailEl) return;
+            const texto = (emailEl.textContent || '').trim().toLowerCase();
+            if (!texto) return;
+            const info = privacyCache.get(texto);
+            if (info && info.privado) {
+                emailEl.innerHTML = '<span class="email-hidden-badge">🔒 Correo privado</span>';
+            }
+        });
+    }
+
+    /* ---------- Aplicar filtro a todos los contenedores abiertos ---------- */
+    function aplicarFiltroEnVistas() {
+        const shareResults = $('share-modal-results');
+        if (shareResults) ocultarEmailsPrivados(shareResults);
+        const shareRecent = $('share-modal-recent');
+        if (shareRecent) ocultarEmailsPrivados(shareRecent);
+        const newmsgList = $('newmsg-list');
+        if (newmsgList) ocultarEmailsPrivados(newmsgList);
+    }
+
+    /* ---------- Observar contenedores de buscadores en tiempo real ---------- */
+    function observarBuscadores() {
+        // share-modal-results
+        const shareResults = $('share-modal-results');
+        if (shareResults && shareResults.dataset.privObs !== '1') {
+            shareResults.dataset.privObs = '1';
+            const obs = new MutationObserver(() => ocultarEmailsPrivados(shareResults));
+            obs.observe(shareResults, { childList: true, subtree: true });
+        }
+        // share-modal-recent
+        const shareRecent = $('share-modal-recent');
+        if (shareRecent && shareRecent.dataset.privObs !== '1') {
+            shareRecent.dataset.privObs = '1';
+            const obs = new MutationObserver(() => ocultarEmailsPrivados(shareRecent));
+            obs.observe(shareRecent, { childList: true, subtree: true });
+        }
+        // newmsg-list
+        const newmsgList = $('newmsg-list');
+        if (newmsgList && newmsgList.dataset.privObs !== '1') {
+            newmsgList.dataset.privObs = '1';
+            const obs = new MutationObserver(() => ocultarEmailsPrivados(newmsgList));
+            obs.observe(newmsgList, { childList: true, subtree: true });
+        }
+    }
+
+    /* ---------- Inyectar el bloque de privacidad en el modal name-modal ---------- */
+    function inyectarBloquePrivacidad() {
+        const modal = $('name-modal');
+        if (!modal) return false;
+        const box = modal.querySelector('.mp-modal-box');
+        if (!box) return false;
+        if (box.querySelector('.name-email-privacy')) return true; // ya inyectado
+
+        const bloque = document.createElement('div');
+        bloque.className = 'name-email-privacy';
+        bloque.innerHTML = `
+            <span class="name-email-privacy-label">Privacidad del correo</span>
+            <div class="name-email-privacy-options">
+                <button type="button" class="name-email-privacy-btn" data-value="publico">Público</button>
+                <button type="button" class="name-email-privacy-btn" data-value="privado">Privado</button>
+            </div>
+            <span class="name-email-privacy-hint">
+                Público: otros verán tu correo · Privado: otros no verán tu correo.
+            </span>
+        `;
+
+        // Insertar justo antes del status (o al final del modal-box)
+        const status = box.querySelector('#name-modal-status');
+        const actions = box.querySelector('.mp-modal-actions');
+        if (status) {
+            box.insertBefore(bloque, status);
+        } else if (actions) {
+            box.insertBefore(bloque, actions);
+        } else {
+            box.appendChild(bloque);
+        }
+
+        // Bind de los botones
+        bloque.querySelectorAll('.name-email-privacy-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const value = btn.dataset.value;
+                const esPrivado = value === 'privado';
+                if (esPrivado === privacidadActual) return; // no change
+                setBotonActivo(esPrivado);
+                await guardarPrivacidad(esPrivado);
+            });
+        });
+
+        return true;
+    }
+
+    /* ---------- Marcar botón activo ---------- */
+    function setBotonActivo(esPrivado) {
+        privacidadActual = esPrivado;
+        const modal = $('name-modal');
+        if (!modal) return;
+        modal.querySelectorAll('.name-email-privacy-btn').forEach(btn => {
+            const val = btn.dataset.value;
+            const active = (val === 'privado' && esPrivado) || (val === 'publico' && !esPrivado);
+            btn.classList.toggle('active', active);
+        });
+    }
+
+    /* ---------- Leer privacidad desde Firestore del usuario actual ---------- */
+    async function cargarPrivacidadActual() {
+        const user = firebase.auth().currentUser;
+        if (!user) return false;
+        try {
+            const doc = await firebase.firestore()
+                .collection('historial_usuarios').doc(user.uid).get();
+            const d = doc.exists ? (doc.data() || {}) : {};
+            privacidadActual = d.email_privado === true;
+        } catch (e) {
+            console.warn('[PRIVACIDAD] Error leyendo:', e);
+            privacidadActual = false;
+        }
+        setBotonActivo(privacidadActual);
+        return privacidadActual;
+    }
+
+    /* ---------- Guardar privacidad en Firestore ---------- */
+    async function guardarPrivacidad(esPrivado) {
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+        try {
+            await firebase.firestore()
+                .collection('historial_usuarios').doc(user.uid)
+                .set({ email_privado: !!esPrivado }, { merge: true });
+            console.log('✅ [PRIVACIDAD] Guardado: email_privado =', esPrivado);
+
+            // Refrescar cache local
+            await cargarCachePrivacidad(true);
+
+            // Re-aplicar filtros en vistas abiertas
+            aplicarFiltroEnVistas();
+
+            // Feedback visual breve
+            const status = $('name-modal-status');
+            if (status) {
+                status.textContent = esPrivado
+                    ? '🔒 Correo ahora es privado'
+                    : '🌐 Correo ahora es público';
+                status.classList.remove('error');
+                status.classList.add('ok');
+                setTimeout(() => {
+                    if (status.textContent.includes('Correo ahora')) {
+                        status.textContent = '';
+                        status.classList.remove('ok');
+                    }
+                }, 1800);
+            }
+        } catch (e) {
+            console.warn('[PRIVACIDAD] Error guardando:', e);
+            const status = $('name-modal-status');
+            if (status) {
+                status.textContent = 'No se pudo guardar la privacidad.';
+                status.classList.remove('ok');
+                status.classList.add('error');
+            }
+        }
+    }
+
+    /* ---------- Detectar apertura del modal name-modal ---------- */
+    function observarModal() {
+        const modal = $('name-modal');
+        if (!modal) { setTimeout(observarModal, 300); return; }
+        if (modal.dataset.privWatch === '1') return;
+        modal.dataset.privWatch = '1';
+
+        const obs = new MutationObserver(async () => {
+            if (modal.classList.contains('visible')) {
+                inyectarBloquePrivacidad();
+                await cargarCachePrivacidad(false);
+                await cargarPrivacidadActual();
+                // Refrescar filtros por si había buscadores abiertos antes
+                aplicarFiltroEnVistas();
+            }
+        });
+        obs.observe(modal, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* ---------- Observar apertura de buscadores (aplicar filtro al abrir) ---------- */
+    function observarVistasBuscadores() {
+        const shareModal = $('share-modal');
+        if (shareModal && shareModal.dataset.privWatchView !== '1') {
+            shareModal.dataset.privWatchView = '1';
+            const obs = new MutationObserver(async () => {
+                if (shareModal.classList.contains('visible')) {
+                    await cargarCachePrivacidad(false);
+                    observarBuscadores();
+                    setTimeout(aplicarFiltroEnVistas, 150);
+                    setTimeout(aplicarFiltroEnVistas, 500);
+                }
+            });
+            obs.observe(shareModal, { attributes: true, attributeFilter: ['class'] });
+        }
+        const newmsgView = $('newmsg-view');
+        if (newmsgView && newmsgView.dataset.privWatchView !== '1') {
+            newmsgView.dataset.privWatchView = '1';
+            const obs = new MutationObserver(async () => {
+                if (newmsgView.classList.contains('visible')) {
+                    await cargarCachePrivacidad(false);
+                    observarBuscadores();
+                    setTimeout(aplicarFiltroEnVistas, 150);
+                    setTimeout(aplicarFiltroEnVistas, 500);
+                }
+            });
+            obs.observe(newmsgView, { attributes: true, attributeFilter: ['class'] });
+        }
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+
+        // Observar cuando el usuario cierra/abre sesión
+        firebase.auth().onAuthStateChanged(user => {
+            if (user) {
+                cargarCachePrivacidad(true).catch(() => {});
+                observarModal();
+                observarVistasBuscadores();
+            } else {
+                privacyCache = new Map();
+                privacidadActual = false;
+            }
+        });
+
+        // También correr por si ya hay sesión
+        if (firebase.auth().currentUser) {
+            cargarCachePrivacidad(true).catch(() => {});
+            observarModal();
+            observarVistasBuscadores();
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
