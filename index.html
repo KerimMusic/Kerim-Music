@@ -78,6 +78,7 @@
 
             <ul class="submenu-list">
                 <li><a href="#" id="mi-playlist-link" class="submenu-link" type="button">Mi Playlist</a></li>
+                <li><a href="#" id="stats-link" class="submenu-link" type="button">Estadísticas de horas</a></li>
                 <li><a href="#" id="mensajes-link" class="submenu-link" type="button">Mensajes <span class="msg-badge" id="msg-badge" style="display:none;">0</span></a></li>
                 <li><a href="#" id="edit-name-link" class="submenu-link" type="button">Editar nombre</a></li>
                 <li><a href="#" id="logout-link" class="submenu-link" type="button">Cerrar Sesion</a></li>
@@ -375,6 +376,37 @@
             </div>
             <div class="newmsg-scroll" id="newmsg-scroll">
                 <div class="newmsg-list" id="newmsg-list"></div>
+            </div>
+        </div>
+
+        <!-- =========================================================
+             VISTA: ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA
+             ========================================================= -->
+        <div class="stats-view" id="stats-view" aria-hidden="true">
+            <div class="st-header">
+                <button class="st-back" id="st-back" type="button" aria-label="Volver">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                         stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"
+                         stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                </button>
+                <h1 class="st-title">Estadísticas de horas escuchando música</h1>
+            </div>
+
+            <div class="st-scroll" id="st-scroll">
+                <div class="st-hero">
+                    <div class="st-hero-label">🎧 Tiempo escuchando música</div>
+                    <div class="st-hero-month" id="st-hero-month">Este mes</div>
+                    <div class="st-hero-time" id="st-hero-time">0 h 0 min</div>
+                </div>
+
+                <div class="st-history-header">HISTORIAL</div>
+                <div class="st-list" id="st-list"></div>
+                <div class="st-empty" id="st-empty" style="display:none;">
+                    <div class="st-empty-title">Aún no hay estadísticas</div>
+                    <div class="st-empty-sub">Empieza a escuchar música para ver tu tiempo aquí</div>
+                </div>
             </div>
         </div>
 
