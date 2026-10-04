@@ -568,21 +568,26 @@ function pintarReproducciones(item, count) {
 }
 
 window.__artistFilter = null;
+window.__artistFilterTitles = [];   // ← NUEVO: guarda títulos para sobrevivir a re-renderizados
 window.__artistFilterName = '';
-window.__sequentialMode = false;   // ← NUEVO: fuerza orden secuencial (Álbum/Playlist/Artista)
+window.__sequentialMode = false;    // ← NUEVO: fuerza orden secuencial
 
 function clearArtistFilter() {
     window.__artistFilter = null;
+    window.__artistFilterTitles = [];
     window.__artistFilterName = '';
-    window.__sequentialMode = false;   // ← NUEVO
+    window.__sequentialMode = false;
     document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: false } }));
 }
 
 function setArtistFilter(items, name) {
     if (!items || !items.length) return;
     window.__artistFilter = items.slice();
+    window.__artistFilterTitles = items
+        .map(i => i.querySelector('.item-title')?.textContent.trim() || '')
+        .filter(Boolean);
     window.__artistFilterName = name || '';
-    window.__sequentialMode = true;    // ← NUEVO: activa reproducción secuencial
+    window.__sequentialMode = true;
     document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: true, name: name || '' } }));
 }
 
@@ -711,18 +716,30 @@ document.addEventListener('DOMContentLoaded', () => {
         if (img && img.getAttribute('src')) return img.src;
         return item.dataset.cover || '';
     }
+
+    /* ────────────────────────────────────────────────────────
+       getCandidateItems: filtro ESTRICTO (sin fallback a "all")
+       para no mezclar canciones entre playlists/álbumes/artistas
+       ──────────────────────────────────────────────────────── */
     function getCandidateItems() {
         const all = getAllItems();
         let candidates = all;
-        if (window.__artistFilter && window.__artistFilter.length) {
-            const filtered = all.filter(i => window.__artistFilter.includes(i));
-            if (filtered.length) candidates = filtered;
+
+        // Filtro ESTRICTO por títulos (sobrevive a re-renderizados del DOM)
+        if (window.__artistFilterTitles && window.__artistFilterTitles.length > 0) {
+            const titleSet = new Set(window.__artistFilterTitles);
+            candidates = all.filter(i => titleSet.has(getItemTitle(i)));
+            // ⚠️ SIN fallback a "all": si no hay coincidencias, devuelve []
+        } else if (window.__artistFilter && window.__artistFilter.length) {
+            candidates = all.filter(i => window.__artistFilter.includes(i));
         }
+
         if (!hayConexion()) {
             candidates = candidates.filter(i => esRecursoLocal(i));
         }
         return candidates;
     }
+
     function loadItem(item, autoplay = true) {
         if (!item) return;
         const src = item.dataset.src;
@@ -770,14 +787,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function playRandomItem() {
         const items = getCandidateItems();
-        if (!items.length) return;
+        if (!items.length) return;   // ← Playlist agotada o sin coincidencias: no reproducir nada
 
-        // NUEVO: si viene de Álbum / Playlist / Perfil de artista, respetar orden secuencial
         if (window.__sequentialMode === true || !isShuffleOn()) {
             let startIdx = 0;
             if (currentItem) {
-                const idx = items.indexOf(currentItem);
-                if (idx !== -1) startIdx = (idx + 1) % items.length;
+                let idx = items.indexOf(currentItem);
+                if (idx === -1) {
+                    const curTitle = getItemTitle(currentItem);
+                    if (curTitle) idx = items.findIndex(i => getItemTitle(i) === curTitle);
+                }
+                if (idx !== -1) {
+                    const nextIdx = idx + 1;
+                    if (nextIdx >= items.length) {
+                        if (window.__sequentialMode === true) {
+                            updateIcon(false);
+                            updateProgress(0);
+                            return;   // ← Fin de la playlist: se detiene
+                        }
+                        startIdx = 0;
+                    } else {
+                        startIdx = nextIdx;
+                    }
+                }
             }
             loadItem(items[startIdx], true);
             return;
@@ -796,11 +828,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const items = getCandidateItems();
         if (!items.length) return;
 
-        // NUEVO: respetar orden secuencial cuando hay filtro activo
         if (window.__sequentialMode === true || !isShuffleOn()) {
             let idx = items.indexOf(currentItem);
+            if (idx === -1) {
+                const curTitle = getItemTitle(currentItem);
+                if (curTitle) idx = items.findIndex(i => getItemTitle(i) === curTitle);
+            }
             if (idx === -1) idx = 0;
-            loadItem(items[(idx + 1) % items.length], true);
+            const nextIdx = idx + 1;
+            if (nextIdx >= items.length) {
+                if (window.__sequentialMode === true) return;   // ← Fin: no da la vuelta
+                loadItem(items[0], true);
+                return;
+            }
+            loadItem(items[nextIdx], true);
             return;
         }
         playRandomItem();
@@ -810,11 +851,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const items = getCandidateItems();
         if (!items.length) return;
 
-        // NUEVO: respetar orden secuencial cuando hay filtro activo
         if (window.__sequentialMode === true || !isShuffleOn()) {
             let idx = items.indexOf(currentItem);
+            if (idx === -1) {
+                const curTitle = getItemTitle(currentItem);
+                if (curTitle) idx = items.findIndex(i => getItemTitle(i) === curTitle);
+            }
             if (idx === -1) idx = 0;
-            loadItem(items[(idx - 1 + items.length) % items.length], true);
+            const prevIdx = idx - 1;
+            if (prevIdx < 0) {
+                if (window.__sequentialMode === true) return;   // ← Inicio: no da la vuelta
+                loadItem(items[items.length - 1], true);
+                return;
+            }
+            loadItem(items[prevIdx], true);
             return;
         }
         playRandomItem();
@@ -879,7 +929,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const item = e.target.closest('.playlist-item');
         if (!item) return;
         if (window.__artistFilter && window.__artistFilter.length) {
-            if (!window.__artistFilter.includes(item)) clearArtistFilter();
+            const itemTitle = getItemTitle(item);
+            let inFilter = window.__artistFilter.includes(item);
+            if (!inFilter && itemTitle && window.__artistFilterTitles && window.__artistFilterTitles.length) {
+                inFilter = window.__artistFilterTitles.includes(itemTitle);
+            }
+            if (!inFilter) clearArtistFilter();
         }
         loadItem(item, true);
     });
@@ -1572,7 +1627,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const list = getArtistItems(artistName);
             if (!list.length) return null;
             if (typeof setArtistFilter === 'function') setArtistFilter(list, artistName);
-            else { window.__artistFilter = list.slice(); window.__artistFilterName = artistName; window.__sequentialMode = true; }
+            else {
+                window.__artistFilter = list.slice();
+                window.__artistFilterTitles = list.map(i => i.querySelector('.item-title')?.textContent.trim() || '').filter(Boolean);
+                window.__artistFilterName = artistName;
+                window.__sequentialMode = true;
+            }
             return list;
         }
         function renderProfile(artistName) {
@@ -1620,7 +1680,7 @@ document.addEventListener('DOMContentLoaded', () => {
             apListen.onclick = () => {
                 const list = activateArtistMode(artistName);
                 if (!list || !list.length) return;
-                list[0].click();                 // ← NUEVO: comienza desde la primera canción del perfil
+                list[0].click();
                 setTimeout(updatePlayingCard, 60);
             };
             if (refreshTimer) clearInterval(refreshTimer);
@@ -3032,7 +3092,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const items = currentPlaylist.canciones.map(c => findItemByTitle(c.titulo)).filter(Boolean);
                 if (!items.length) return;
                 if (typeof setArtistFilter === 'function') setArtistFilter(items, currentPlaylist.nombre);
-                else { window.__artistFilter = items.slice(); window.__artistFilterName = currentPlaylist.nombre; window.__sequentialMode = true; }
+                else {
+                    window.__artistFilter = items.slice();
+                    window.__artistFilterTitles = items.map(i => i.querySelector('.item-title')?.textContent.trim() || '').filter(Boolean);
+                    window.__artistFilterName = currentPlaylist.nombre;
+                    window.__sequentialMode = true;
+                }
                 items[0].click();
                 setTimeout(refreshPlayingRows, 60);
             });
