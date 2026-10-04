@@ -193,15 +193,36 @@ async function registrarOyente(nombreCancion) {
     oyentesCache[nombreCancion][uid] = new Date();
     const item = buscarItemPorTitulo(nombreCancion);
     if (item) pintarReproducciones(item, contarOyentes(nombreCancion));
+
+    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+        await window.OmegaQueue.enqueue({
+            tipo: 'oyente',
+            data: { nombreCancion: nombreCancion, uid: uid }
+        });
+        return;
+    }
+
     try {
         const docRef = db.collection('oyentes_canciones').doc(nombreCancion);
         const docSnap = await docRef.get();
         if (docSnap.exists) {
-            await docRef.update({ [`oyentes.${uid}`]: firebase.firestore.FieldValue.serverTimestamp() });
+            const upd = {};
+            upd['oyentes.' + uid] = firebase.firestore.FieldValue.serverTimestamp();
+            await docRef.update(upd);
         } else {
-            await docRef.set({ oyentes: { [uid]: firebase.firestore.FieldValue.serverTimestamp() } });
+            const obj = {};
+            obj[uid] = firebase.firestore.FieldValue.serverTimestamp();
+            await docRef.set({ oyentes: obj });
         }
-    } catch (e) { console.error('Error al registrar oyente:', e); }
+    } catch (e) {
+        console.error('Error al registrar oyente:', e);
+        if (window.OmegaQueue) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'oyente',
+                data: { nombreCancion: nombreCancion, uid: uid }
+            });
+        }
+    }
 }
 
 async function cargarOyentesCancion(nombreCancion) {
@@ -274,19 +295,37 @@ async function guardarEnHistorial(titulo) {
     const user = firebase.auth().currentUser;
     if (!user || !titulo) return;
     historialCache = historialCache.filter(c => c.titulo !== titulo);
-    historialCache.unshift({ titulo, fecha: new Date() });
+    historialCache.unshift({ titulo: titulo, fecha: new Date() });
     if (historialCache.length > MAX_HISTORIAL) historialCache.length = MAX_HISTORIAL;
     if (typeof window.__buildListenAgain === 'function') window.__buildListenAgain();
+
+    const nuevasCanciones = historialCache.map(c => ({
+        titulo: c.titulo,
+        fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
+    }));
+
+    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+        await window.OmegaQueue.enqueue({
+            tipo: 'historial',
+            data: { canciones: nuevasCanciones }
+        });
+        return;
+    }
+
     try {
         const docRef = db.collection('historial_usuarios').doc(user.uid);
         const docSnap = await docRef.get();
-        const nuevasCanciones = historialCache.map(c => ({
-            titulo: c.titulo,
-            fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
-        }));
         if (docSnap.exists) await docRef.update({ canciones: nuevasCanciones });
         else await docRef.set({ canciones: nuevasCanciones });
-    } catch (e) { console.warn('Error al guardar historial:', e); }
+    } catch (e) {
+        console.warn('Error al guardar historial, encolando:', e);
+        if (window.OmegaQueue) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'historial',
+                data: { canciones: nuevasCanciones }
+            });
+        }
+    }
 }
 
 window.__cargarHistorialUsuario = cargarHistorialUsuario;
@@ -332,25 +371,42 @@ async function cargarPlaylistsUsuario() {
 async function guardarCompletadasEnHistorial() {
     const user = firebase.auth().currentUser;
     if (!user) return;
+    const dataToSave = {
+        canciones_completadas: completadasCache.map(c => ({
+            titulo: c.titulo,
+            fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
+        }))
+    };
+
+    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+        await window.OmegaQueue.enqueue({
+            tipo: 'completadas',
+            data: dataToSave
+        });
+        return;
+    }
+
     try {
         const docRef = db.collection('historial_usuarios').doc(user.uid);
         const docSnap = await docRef.get();
-        const dataToSave = {
-            canciones_completadas: completadasCache.map(c => ({
-                titulo: c.titulo,
-                fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
-            }))
-        };
         if (docSnap.exists) await docRef.update(dataToSave);
         else await docRef.set(dataToSave);
-    } catch (e) { console.warn('Error al guardar completadas:', e); }
+    } catch (e) {
+        console.warn('Error al guardar completadas:', e);
+        if (window.OmegaQueue) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'completadas',
+                data: dataToSave
+            });
+        }
+    }
 }
 
 async function guardarEnPlaylist(titulo) {
     const user = firebase.auth().currentUser;
     if (!user || !titulo) return;
     completadasCache = completadasCache.filter(c => c.titulo !== titulo);
-    completadasCache.push({ titulo, fecha: new Date() });
+    completadasCache.push({ titulo: titulo, fecha: new Date() });
     if (completadasCache.length > MAX_COMPLETADAS) completadasCache = completadasCache.slice(-MAX_COMPLETADAS);
     await guardarCompletadasEnHistorial();
     if (typeof window.__buildListenAgain === 'function') window.__buildListenAgain();
@@ -366,7 +422,7 @@ function computePlaylistsFromCompletadas() {
         const plId = 'pl_' + idx;
         const exclusions = playlistsExclusionsCache[plId] || {};
         const excluidas = Array.isArray(exclusions.excluidas) ? exclusions.excluidas : [];
-        const cancionesFiltradas = chunk.filter(c => !excluidas.includes(c.titulo));
+        const cancionesFiltradas = chunk.filter(c => excluidas.indexOf(c.titulo) === -1);
         if (!cancionesFiltradas.length) continue;
         playlists.push({
             id: plId,
@@ -389,45 +445,76 @@ window.__guardarEdicionPlaylist = async function (playlist, excluidas) {
     if (!playlistsExclusionsCache[playlist.id]) playlistsExclusionsCache[playlist.id] = {};
     const previas = Array.isArray(playlistsExclusionsCache[playlist.id].excluidas)
         ? playlistsExclusionsCache[playlist.id].excluidas : [];
-    playlistsExclusionsCache[playlist.id].excluidas = Array.from(new Set([...previas, ...excluidas]));
+    playlistsExclusionsCache[playlist.id].excluidas =
+        Array.from(new Set(previas.concat(excluidas)));
+
+    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+        await window.OmegaQueue.enqueue({
+            tipo: 'playlist_edits',
+            data: { playlists_edits: playlistsExclusionsCache }
+        });
+        return;
+    }
+
     try {
         const docRef = db.collection('historial_usuarios').doc(user.uid);
         await docRef.set({ playlists_edits: playlistsExclusionsCache }, { merge: true });
-    } catch (e) { throw e; }
+    } catch (e) {
+        if (window.OmegaQueue) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'playlist_edits',
+                data: { playlists_edits: playlistsExclusionsCache }
+            });
+        }
+    }
 
     try {
-        const cancionesFiltradas = playlist.canciones.filter(c => !excluidas.includes(c.titulo));
+        const cancionesFiltradas = playlist.canciones.filter(c => excluidas.indexOf(c.titulo) === -1);
         const plRoot = document.getElementById('playlist');
         function findItem(titulo) {
             if (!plRoot) return null;
             const n = String(titulo || '').toLowerCase().trim();
             if (!n) return null;
-            for (const it of plRoot.querySelectorAll('.playlist-item')) {
-                const t = (it.querySelector('.item-title')?.textContent || '').trim().toLowerCase();
+            const items = plRoot.querySelectorAll('.playlist-item');
+            for (let i = 0; i < items.length; i++) {
+                const it = items[i];
+                const titleEl = it.querySelector('.item-title');
+                const t = (titleEl ? titleEl.textContent : '').trim().toLowerCase();
                 if (t === n) return it;
             }
             return null;
         }
         const cancionesSync = cancionesFiltradas.map(c => {
             const it = findItem(c.titulo);
+            let portadaItem = '';
+            if (it) {
+                const img = it.querySelector('.thumbnail img');
+                if (img) portadaItem = img.src || '';
+            }
+            let subt = '';
+            if (it) {
+                const subEl = it.querySelector('.item-subtitle');
+                if (subEl) subt = subEl.textContent.trim();
+            }
             return {
                 titulo: c.titulo,
-                portada: (it && it.querySelector('.thumbnail img')?.src) || c.portada || '',
-                subtitulo: (it && it.querySelector('.item-subtitle')?.textContent.trim()) || c.subtitulo || ''
+                portada: portadaItem || c.portada || '',
+                subtitulo: subt || c.subtitulo || ''
             };
         });
         let portada = '';
-        for (const c of cancionesSync) { if (c.portada) { portada = c.portada; break; } }
+        for (let i = 0; i < cancionesSync.length; i++) {
+            if (cancionesSync[i].portada) { portada = cancionesSync[i].portada; break; }
+        }
         const snap = await db.collection('playlists_compartidas')
             .where('de', '==', user.uid)
             .where('playlistId', '==', playlist.id)
             .get();
         if (!snap.empty) {
-            await Promise.all(snap.docs.map(d => d.ref.update({ canciones: cancionesSync, portada })));
+            await Promise.all(snap.docs.map(d => d.ref.update({ canciones: cancionesSync, portada: portada })));
         }
     } catch (e) { console.warn('Error sincronizando compartidas:', e); }
 };
-
 /* ============================================================
    1. DATOS GLOBALES Y UTILIDADES
    ============================================================ */
@@ -627,7 +714,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const filtered = all.filter(i => window.__artistFilter.includes(i));
             if (filtered.length) candidates = filtered;
         }
-        // FIX OFFLINE: sin conexión solo se consideran canciones descargadas (offline)
         if (!hayConexion()) {
             candidates = candidates.filter(i => esRecursoLocal(i));
         }
@@ -750,7 +836,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateIcon(false); updateProgress(0);
         if (currentTimeEl) currentTimeEl.textContent = '0:00';
         if (completed && currentItem && hayConexion()) {
-            // FIX OFFLINE: no bloquear el salto de canción cuando no hay conexión
             const titulo = getItemTitle(currentItem);
             const user = firebase.auth().currentUser;
             if (titulo && user && esNuevoOyente(titulo, user.uid)) {
@@ -2382,7 +2467,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 })();
-
 /* ============================================================
    16. CERRAR SESIÓN
    ============================================================ */
@@ -2689,7 +2773,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   18. VISTA DE "VOLVER A OÍR" (detalle + escuchar + EDITAR)
+   18. VISTA DE "VOLVER A OÍR"
    ============================================================ */
 (function () {
     'use strict';
@@ -3126,6 +3210,27 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!user) throw new Error('Debes iniciar sesión.');
         if (!playlist || !Array.isArray(playlist.canciones) || !playlist.canciones.length) throw new Error('La playlist está vacía.');
         if (user.uid === targetUid) throw new Error('No puedes compartir contigo mismo.');
+
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'compartir',
+                data: {
+                    playlist: {
+                        id: playlist.id || '',
+                        nombre: playlist.nombre || 'Playlist',
+                        canciones: playlist.canciones.map(c => ({
+                            titulo: c.titulo,
+                            portada: c.portada || '',
+                            subtitulo: c.subtitulo || ''
+                        }))
+                    },
+                    targetUser: { uid: targetUid, nombre: targetName || '', email: targetEmail || '', foto: targetFoto || '' }
+                }
+            });
+            yaCompartidosCache.add(targetUid);
+            return true;
+        }
+
         const canciones = playlist.canciones.map(c => {
             const it = findLocalItemByTitle(c.titulo);
             return { titulo: c.titulo, portada: getCoverFromItem(it) || c.portada || '', subtitulo: getSubtitleFromItem(it) || c.subtitulo || '' };
@@ -3261,7 +3366,14 @@ document.addEventListener('DOMContentLoaded', () => {
             status.textContent = 'Dejando de compartir con ' + u.nombre + '…';
             status.classList.remove('ok');
             try {
-                await dejarDeCompartirPlaylist(currentPlaylistToShare, u.uid);
+                if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+                    await window.OmegaQueue.enqueue({
+                        tipo: 'dejar_compartir',
+                        data: { playlist: { id: currentPlaylistToShare.id || '', nombre: currentPlaylistToShare.nombre || '' }, targetUid: u.uid }
+                    });
+                } else {
+                    await dejarDeCompartirPlaylist(currentPlaylistToShare, u.uid);
+                }
                 status.textContent = '✓ Dejaste de compartir con ' + u.nombre;
                 status.classList.add('ok');
                 const results = $('share-modal-results');
@@ -3536,7 +3648,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .collection(COLLECTION)
             .where('uid', '==', user.uid)
             .onSnapshot(snap => {
-                miPlaylistsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                miPlaylistsCache = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
                 miPlaylistsCache.sort((a, b) => {
                     const fa = a.fecha && typeof a.fecha.seconds === 'number' ? a.fecha.seconds : 0;
                     const fb = b.fecha && typeof b.fecha.seconds === 'number' ? b.fecha.seconds : 0;
@@ -3591,25 +3703,54 @@ document.addEventListener('DOMContentLoaded', () => {
         const confirmBtn = $('mp-create-confirm');
         const privCheck = $('mp-create-private');
 
-        const nombre = (input?.value || '').trim();
+        const nombre = (input ? input.value : '').trim();
         if (!nombre) {
             if (status) { status.textContent = 'Escribe un nombre'; status.classList.remove('ok'); }
             return;
         }
         if (confirmBtn) confirmBtn.disabled = true;
+
+        const esPrivada = !!(privCheck && privCheck.checked);
+
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'crear_playlist',
+                data: { nombre: nombre, privada: esPrivada }
+            });
+            if (status) {
+                status.textContent = '✓ Guardada (se creará al volver internet)';
+                status.classList.add('ok');
+            }
+            if (confirmBtn) confirmBtn.disabled = false;
+            setTimeout(closeCreateModal, 900);
+            return;
+        }
+
         if (status) { status.textContent = 'Creando...'; status.classList.remove('ok'); }
         try {
             await firebase.firestore().collection(COLLECTION).add({
                 uid: user.uid,
-                nombre,
-                privada: !!(privCheck && privCheck.checked),
+                nombre: nombre,
+                privada: esPrivada,
                 canciones: [],
                 fecha: firebase.firestore.FieldValue.serverTimestamp()
             });
             if (status) { status.textContent = '✓ Playlist creada'; status.classList.add('ok'); }
             setTimeout(closeCreateModal, 500);
         } catch (e) {
-            if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'crear_playlist',
+                    data: { nombre: nombre, privada: esPrivada }
+                });
+                if (status) {
+                    status.textContent = '✓ Guardada (se creará al volver internet)';
+                    status.classList.add('ok');
+                }
+                setTimeout(closeCreateModal, 900);
+            } else {
+                if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
+            }
         } finally {
             if (confirmBtn) confirmBtn.disabled = false;
         }
@@ -3685,16 +3826,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(closeAddModal, 1100);
                 return;
             }
-            canciones.push({
+            const nuevaCancion = {
                 titulo: currentSongToAdd.titulo,
                 portada: currentSongToAdd.portada || '',
                 subtitulo: currentSongToAdd.subtitulo || ''
-            });
-            await firebase.firestore().collection(COLLECTION).doc(pl.id).update({ canciones });
+            };
+
+            if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'anadir_cancion',
+                    data: { playlistId: pl.id, cancion: nuevaCancion }
+                });
+                if (status) { status.textContent = '✓ Añadida a ' + pl.nombre + ' (pendiente)'; status.classList.add('ok'); }
+                setTimeout(closeAddModal, 1000);
+                return;
+            }
+
+            canciones.push(nuevaCancion);
+            await firebase.firestore().collection(COLLECTION).doc(pl.id).update({ canciones: canciones });
             if (status) { status.textContent = '✓ Añadida a ' + pl.nombre; status.classList.add('ok'); }
             setTimeout(closeAddModal, 1000);
         } catch (e) {
-            if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
+            if (window.OmegaQueue) {
+                const nuevaCancion = {
+                    titulo: currentSongToAdd.titulo,
+                    portada: currentSongToAdd.portada || '',
+                    subtitulo: currentSongToAdd.subtitulo || ''
+                };
+                await window.OmegaQueue.enqueue({
+                    tipo: 'anadir_cancion',
+                    data: { playlistId: pl.id, cancion: nuevaCancion }
+                });
+                if (status) { status.textContent = '✓ Añadida a ' + pl.nombre + ' (pendiente)'; status.classList.add('ok'); }
+                setTimeout(closeAddModal, 1000);
+            } else {
+                if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
+            }
         }
     }
 
@@ -3711,9 +3878,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function togglePlaylistVisibility(plId, nuevoPrivada) {
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'visibilidad',
+                data: { playlistId: plId, privada: !!nuevoPrivada }
+            });
+            return;
+        }
         try {
             await firebase.firestore().collection(COLLECTION).doc(plId).update({ privada: !!nuevoPrivada });
-        } catch (e) { console.warn('Error actualizando visibilidad:', e); }
+        } catch (e) {
+            console.warn('Error actualizando visibilidad:', e);
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'visibilidad',
+                    data: { playlistId: plId, privada: !!nuevoPrivada }
+                });
+            }
+        }
     }
 
     function injectShareVisibilityToggle() {
@@ -4090,7 +4272,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderPublicPlaylists(playlists) {
         const els = ensurePublicSection();
         if (!els) return;
-        const { sec, carousel } = els;
+        const sec = els.sec;
+        const carousel = els.carousel;
         carousel.innerHTML = '';
 
         if (!playlists.length) {
@@ -4487,21 +4670,23 @@ document.addEventListener('DOMContentLoaded', () => {
     async function ensureConversation(convId, otherUser) {
         const ref = firebase.firestore().collection('conversaciones').doc(convId);
         const snap = await ref.get();
-        const info = {
-            [currentUser.uid]: {
-                nombre: currentUser.displayName || currentUser.email || 'Usuario',
-                foto: currentUser.photoURL || ''
-            },
-            [otherUser.uid]: {
-                nombre: otherUser.nombre || 'Usuario',
-                foto: otherUser.foto || ''
-            }
+        const info = {};
+        info[currentUser.uid] = {
+            nombre: currentUser.displayName || currentUser.email || 'Usuario',
+            foto: currentUser.photoURL || ''
+        };
+        info[otherUser.uid] = {
+            nombre: otherUser.nombre || 'Usuario',
+            foto: otherUser.foto || ''
         };
         if (!snap.exists) {
+            const noLeidos = {};
+            noLeidos[currentUser.uid] = 0;
+            noLeidos[otherUser.uid] = 0;
             await ref.set({
                 participantes: [currentUser.uid, otherUser.uid].sort(),
-                info,
-                noLeidos: { [currentUser.uid]: 0, [otherUser.uid]: 0 },
+                info: info,
+                noLeidos: noLeidos,
                 ultimoMensaje: null,
                 actualizado: firebase.firestore.FieldValue.serverTimestamp()
             });
@@ -4522,9 +4707,9 @@ document.addEventListener('DOMContentLoaded', () => {
     async function markConversationRead(convId) {
         if (!currentUser) return;
         try {
-            await firebase.firestore().collection('conversaciones').doc(convId).update({
-                ['noLeidos.' + currentUser.uid]: 0
-            });
+            const upd = {};
+            upd['noLeidos.' + currentUser.uid] = 0;
+            await firebase.firestore().collection('conversaciones').doc(convId).update(upd);
         } catch (e) {}
     }
 
@@ -4635,36 +4820,60 @@ document.addEventListener('DOMContentLoaded', () => {
         currentAttachment = null;
         renderAttachment();
 
-        try { await ensureConversation(convId, currentChat); } catch (e) {}
-
         const payload = {
-            de: currentUser.uid,
             texto: texto,
             cancion: cancion ? {
                 titulo: cancion.titulo,
                 artista: cancion.artista || '',
                 portada: cancion.portada || '',
                 audioUrl: cancion.audioUrl || ''
-            } : null,
-            fecha: firebase.firestore.FieldValue.serverTimestamp(),
-            leido: false
+            } : null
         };
 
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'mensaje',
+                data: { convId: convId, otherUser: currentChat, payload: payload }
+            });
+            return;
+        }
+
         try {
+            await ensureConversation(convId, currentChat);
             const convRef = firebase.firestore().collection('conversaciones').doc(convId);
-            await convRef.collection('mensajes').add(payload);
+            await convRef.collection('mensajes').add({
+                de: currentUser.uid,
+                texto: payload.texto,
+                cancion: payload.cancion,
+                fecha: firebase.firestore.FieldValue.serverTimestamp(),
+                leido: false,
+                visto: false
+            });
+            const convSnap = await convRef.get();
+            const convData = convSnap.data() || {};
+            const noLeidos = convData.noLeidos || {};
+            noLeidos[currentChat.uid] = (noLeidos[currentChat.uid] || 0) + 1;
+            noLeidos[currentUser.uid] = 0;
+            const textoUltimo = payload.texto || (payload.cancion ? '🎵 ' + (payload.cancion.titulo || 'Canción') : '');
             await convRef.update({
                 ultimoMensaje: {
-                    texto: texto || (cancion ? '🎵 ' + (cancion.titulo || 'Canción') : ''),
+                    texto: textoUltimo,
                     de: currentUser.uid,
                     fecha: firebase.firestore.FieldValue.serverTimestamp(),
-                    tieneCancion: !!cancion
+                    tieneCancion: !!payload.cancion
                 },
-                ['noLeidos.' + currentChat.uid]: firebase.firestore.FieldValue.increment(1),
-                ['noLeidos.' + currentUser.uid]: 0,
+                noLeidos: noLeidos,
                 actualizado: firebase.firestore.FieldValue.serverTimestamp()
             });
-        } catch (e) { console.warn('Error enviando mensaje:', e); }
+        } catch (e) {
+            console.warn('Error enviando mensaje, encolando:', e);
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'mensaje',
+                    data: { convId: convId, otherUser: currentChat, payload: payload }
+                });
+            }
+        }
     }
 
     function renderAttachment() {
@@ -5209,10 +5418,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const name = (info.nombre || '').trim().toLowerCase();
                 const noLeidos = (d.noLeidos && d.noLeidos[currentUid]) || 0;
                 if (name === activeName && noLeidos > 0) {
-                    tasks.push(
-                        doc.ref.update({ ['noLeidos.' + currentUid]: 0 })
-                            .catch(() => {})
-                    );
+                    const upd = {};
+                    upd['noLeidos.' + currentUid] = 0;
+                    tasks.push(doc.ref.update(upd).catch(() => {}));
                 }
             });
 
@@ -5334,7 +5542,6 @@ document.addEventListener('DOMContentLoaded', () => {
             backdrop-filter: blur(3px);
         }
         .conv-menu-backdrop.visible { opacity: 1; visibility: visible; }
-
         .conv-menu {
             width: 100%; max-width: 340px;
             background: #141414;
@@ -5345,7 +5552,6 @@ document.addEventListener('DOMContentLoaded', () => {
             transition: transform 0.25s cubic-bezier(0.22,1,0.36,1);
         }
         .conv-menu-backdrop.visible .conv-menu { transform: scale(1); }
-
         .conv-menu-title {
             padding: 16px 18px 10px;
             font-size: 12.5px; font-weight: 800;
@@ -5380,8 +5586,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cursor: pointer;
         }
         .conv-menu-cancel:active { background: #262626; }
-
-        .msg-row.selecting { padding-left: 52px !important; }
+        .msg-row.selecting { padding-left: 52px !important; position: relative; }
         .msg-row .msg-row-select {
             position: absolute; left: 14px; top: 50%;
             transform: translateY(-50%);
@@ -5406,7 +5611,6 @@ document.addEventListener('DOMContentLoaded', () => {
             transform: rotate(-45deg) translate(1px, -1px);
         }
         .msg-row.selecting { cursor: pointer; }
-
         .conv-clean-bar {
             position: absolute;
             left: 0; right: 0; bottom: 0;
@@ -5421,11 +5625,9 @@ document.addEventListener('DOMContentLoaded', () => {
             box-shadow: 0 -8px 26px rgba(0,0,0,0.7);
         }
         .conv-clean-bar.visible { transform: translateY(0); }
-
         .conv-clean-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
         .conv-clean-count { font-size: 14px; font-weight: 800; color: #ffffff; }
         .conv-clean-hint  { font-size: 11.5px; color: #999999; }
-
         .conv-clean-btn {
             flex-shrink: 0;
             border: none; border-radius: 50px;
@@ -5439,7 +5641,6 @@ document.addEventListener('DOMContentLoaded', () => {
         .conv-clean-btn.confirm { background: #ff2a2a; color: #ffffff; box-shadow: 0 6px 18px rgba(255,42,42,0.35); }
         .conv-clean-btn.confirm:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
         .conv-clean-btn:active:not(:disabled) { transform: scale(0.95); }
-
         .conv-confirm-box {
             width: 100%; max-width: 340px;
             background: #141414;
@@ -5914,6 +6115,12 @@ document.addEventListener('DOMContentLoaded', () => {
             window.__pendingFCMToken = token;
             return;
         }
+
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({ tipo: 'fcm_token', data: { token: token } });
+            return;
+        }
+
         try {
             await firebase.firestore()
                 .collection('historial_usuarios')
@@ -5922,6 +6129,9 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('✅ Token FCM guardado');
         } catch (e) {
             console.warn('⚠️ No se pudo guardar token FCM:', e);
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({ tipo: 'fcm_token', data: { token: token } });
+            }
         }
     };
 
@@ -6046,6 +6256,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateStatus('Comprobando disponibilidad…', 'checking');
         setSaveEnabled(false);
+
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            updateStatus('✅ Se verificará al volver internet.', 'ok');
+            setSaveEnabled(true);
+            return;
+        }
+
         try {
             const available = await isNameAvailable(trimmed);
             if (token !== checkToken) return;
@@ -6057,8 +6274,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 setSaveEnabled(true);
             }
         } catch (e) {
-            updateStatus('Error al verificar. Intenta de nuevo.', 'error');
-            setSaveEnabled(false);
+            updateStatus('✅ Se verificará al volver internet.', 'ok');
+            setSaveEnabled(true);
         }
     }
 
@@ -6106,13 +6323,25 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         const newName = validation.value;
+        const nombreLower = normalizeName(newName);
 
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Guardando…'; }
         updateStatus('Guardando…', 'checking');
 
-        try {
-            const nombreLower = normalizeName(newName);
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'editar_nombre',
+                data: { nombre: newName, nombre_lower: nombreLower }
+            });
+            try { await user.updateProfile({ displayName: newName }); } catch (e) {}
+            applyNewNameEverywhere(newName);
+            updateStatus('✅ Guardado (se sincronizará al volver internet)', 'ok');
+            setTimeout(closeModal, 1200);
+            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; }
+            return;
+        }
 
+        try {
             const available = await isNameAvailable(newName);
             if (!available) {
                 updateStatus('❌ Ese nombre no está disponible.', 'error');
@@ -6136,10 +6365,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     .get();
                 const tasks = [];
                 convSnap.forEach(doc => {
-                    tasks.push(
-                        doc.ref.update({ ['info.' + user.uid + '.nombre']: newName })
-                            .catch(() => {})
-                    );
+                    const upd = {};
+                    upd['info.' + user.uid + '.nombre'] = newName;
+                    tasks.push(doc.ref.update(upd).catch(() => {}));
                 });
                 if (tasks.length) await Promise.all(tasks);
             } catch (e) { console.warn('Error actualizando conversaciones:', e); }
@@ -6155,7 +6383,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (e) {
             console.error('Error guardando nombre:', e);
-            updateStatus('Error al guardar. Intenta de nuevo.', 'error');
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'editar_nombre',
+                    data: { nombre: newName, nombre_lower: nombreLower }
+                });
+                applyNewNameEverywhere(newName);
+                updateStatus('✅ Guardado (se sincronizará al volver internet)', 'ok');
+                setTimeout(closeModal, 1200);
+            } else {
+                updateStatus('Error al guardar. Intenta de nuevo.', 'error');
+            }
         } finally {
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; }
         }
@@ -6164,10 +6402,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyNewNameEverywhere(newName) {
         const sideEl = $('submenu-user-name');
         if (sideEl) sideEl.textContent = newName;
-
         const modalInput = $('name-modal-input');
         if (modalInput) modalInput.value = newName;
-
         currentName = newName;
     }
 
@@ -6809,6 +7045,29 @@ document.addEventListener('DOMContentLoaded', () => {
     async function guardarPrivacidad(esPrivado) {
         const user = firebase.auth().currentUser;
         if (!user) return;
+
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'privacidad_email',
+                data: { privado: !!esPrivado }
+            });
+            const status = $('name-modal-status');
+            if (status) {
+                status.textContent = esPrivado
+                    ? '🔒 Guardado: correo privado (pendiente)'
+                    : '🌐 Guardado: correo público (pendiente)';
+                status.classList.remove('error');
+                status.classList.add('ok');
+                setTimeout(() => {
+                    if (status.textContent.includes('Guardado:')) {
+                        status.textContent = '';
+                        status.classList.remove('ok');
+                    }
+                }, 1800);
+            }
+            return;
+        }
+
         try {
             await firebase.firestore()
                 .collection('historial_usuarios').doc(user.uid)
@@ -6833,11 +7092,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) {
             console.warn('[PRIVACIDAD] Error guardando:', e);
-            const status = $('name-modal-status');
-            if (status) {
-                status.textContent = 'No se pudo guardar la privacidad.';
-                status.classList.remove('ok');
-                status.classList.add('error');
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'privacidad_email',
+                    data: { privado: !!esPrivado }
+                });
             }
         }
     }
@@ -7607,6 +7866,14 @@ document.addEventListener('DOMContentLoaded', () => {
     async function deletePlaylistFromFirestore(pl) {
         if (!pl || !pl.id) throw new Error('Playlist sin id');
 
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'eliminar_playlist',
+                data: { playlistId: pl.id }
+            });
+            return;
+        }
+
         try {
             await firebase.firestore().collection('mis_playlists').doc(pl.id).delete();
         } catch (e) { console.warn('[DEL] mis_playlists:', e); }
@@ -8180,7 +8447,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    38. DESCARGAS OFFLINE CON INDEXEDDB + ESTADO DEL BOTÓN #fs-like
-   (VERSIÓN MEJORADA - INDICADOR CLARO)
    ============================================================ */
 (function () {
     'use strict';
@@ -8717,21 +8983,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    39. ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA
-   - Rastrea el tiempo real con la música reproduciéndose.
-   - Deja de contar tras 5 min sin interacción.
-   - Guarda en historial_usuarios → campo "tiempo_escucha":
-        { "2026-10": <segundos>, "2026-09": <segundos>, ... }
-   - NO modifica el historial de canciones ni ninguna otra cosa.
    ============================================================ */
 (function () {
     'use strict';
 
     const $ = (id) => document.getElementById(id);
 
-    const INACTIVITY_MS     = 5 * 60 * 1000;  // 5 min sin interacción → pausa
-    const TICK_MS           = 10000;          // chequeo cada 10 s
-    const SAVE_INTERVAL_MS  = 30000;          // guardar en Firestore cada 30 s
-    const MAX_TICK_DT_S     = 60;             // descarta ticks anómalos (> 1 min)
+    const INACTIVITY_MS     = 5 * 60 * 1000;
+    const TICK_MS           = 10000;
+    const SAVE_INTERVAL_MS  = 30000;
+    const MAX_TICK_DT_S     = 60;
 
     const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                       'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -8748,7 +9009,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let mesesCache      = {};
     let _dirty          = false;
 
-    /* ---------- Utilidades ---------- */
     function monthKey(d) {
         const date = d || new Date();
         const y = date.getFullYear();
@@ -8772,7 +9032,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return h + ' h ' + m + ' min';
     }
 
-    /* ---------- Interacción del usuario ---------- */
     function markInteraction() { lastInteraction = Date.now(); }
 
     function attachInteractionListeners() {
@@ -8782,7 +9041,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
     }
 
-    /* ---------- Firestore ---------- */
     async function loadMeses() {
         if (!currentUser) { mesesCache = {}; return; }
         try {
@@ -8814,16 +9072,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!_dirty) return;
 
+        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
+            await window.OmegaQueue.enqueue({
+                tipo: 'tiempo_escucha',
+                data: { meses: mesesCache }
+            });
+            _dirty = false;
+            return;
+        }
+
         try {
             const ref = firebase.firestore().collection('historial_usuarios').doc(currentUser.uid);
             await ref.set({ tiempo_escucha: mesesCache }, { merge: true });
             _dirty = false;
         } catch (e) {
             console.warn('[STATS] No se pudo guardar tiempo_escucha:', e);
+            if (window.OmegaQueue) {
+                await window.OmegaQueue.enqueue({
+                    tipo: 'tiempo_escucha',
+                    data: { meses: mesesCache }
+                });
+                _dirty = false;
+            }
         }
     }
 
-    /* ---------- Tick de acumulación ---------- */
     function tick() {
         const now = Date.now();
         const dt  = (now - lastTickTime) / 1000;
@@ -8849,7 +9122,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    /* ---------- Render ---------- */
     function renderStats() {
         const curKey  = monthKey();
         const curSecs = (mesesCache[curKey] || 0) + pendingSeconds;
@@ -8897,7 +9169,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    /* ---------- Apertura / cierre de la vista ---------- */
     function closeOtherViews() {
         ['playlist-view','artist-profile','album-view','mi-playlist-view',
          'mensajes-view','chat-view','newmsg-view'].forEach(id => {
@@ -8946,7 +9217,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    /* ---------- Init ---------- */
     function init() {
         if (typeof firebase === 'undefined' || !firebase.auth) {
             setTimeout(init, 300);
