@@ -515,6 +515,7 @@ window.__guardarEdicionPlaylist = async function (playlist, excluidas) {
         }
     } catch (e) { console.warn('Error sincronizando compartidas:', e); }
 };
+
 /* ============================================================
    1. DATOS GLOBALES Y UTILIDADES
    ============================================================ */
@@ -568,10 +569,12 @@ function pintarReproducciones(item, count) {
 
 window.__artistFilter = null;
 window.__artistFilterName = '';
+window.__sequentialMode = false;   // ← NUEVO: fuerza orden secuencial (Álbum/Playlist/Artista)
 
 function clearArtistFilter() {
     window.__artistFilter = null;
     window.__artistFilterName = '';
+    window.__sequentialMode = false;   // ← NUEVO
     document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: false } }));
 }
 
@@ -579,6 +582,7 @@ function setArtistFilter(items, name) {
     if (!items || !items.length) return;
     window.__artistFilter = items.slice();
     window.__artistFilterName = name || '';
+    window.__sequentialMode = true;    // ← NUEVO: activa reproducción secuencial
     document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: true, name: name || '' } }));
 }
 
@@ -767,7 +771,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function playRandomItem() {
         const items = getCandidateItems();
         if (!items.length) return;
-        if (!isShuffleOn()) {
+
+        // NUEVO: si viene de Álbum / Playlist / Perfil de artista, respetar orden secuencial
+        if (window.__sequentialMode === true || !isShuffleOn()) {
             let startIdx = 0;
             if (currentItem) {
                 const idx = items.indexOf(currentItem);
@@ -776,6 +782,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loadItem(items[startIdx], true);
             return;
         }
+
         let candidates = items;
         if (items.length > 1 && currentItem && items.includes(currentItem)) {
             candidates = items.filter(i => i !== currentItem);
@@ -784,22 +791,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const randomItem = candidates[Math.floor(Math.random() * candidates.length)];
         loadItem(randomItem, true);
     }
+
     function goNextItem() {
         const items = getCandidateItems();
         if (!items.length) return;
-        if (isShuffleOn()) { playRandomItem(); return; }
-        let idx = items.indexOf(currentItem);
-        if (idx === -1) idx = 0;
-        loadItem(items[(idx + 1) % items.length], true);
+
+        // NUEVO: respetar orden secuencial cuando hay filtro activo
+        if (window.__sequentialMode === true || !isShuffleOn()) {
+            let idx = items.indexOf(currentItem);
+            if (idx === -1) idx = 0;
+            loadItem(items[(idx + 1) % items.length], true);
+            return;
+        }
+        playRandomItem();
     }
+
     function goPrevItem() {
         const items = getCandidateItems();
         if (!items.length) return;
-        if (isShuffleOn()) { playRandomItem(); return; }
-        let idx = items.indexOf(currentItem);
-        if (idx === -1) idx = 0;
-        loadItem(items[(idx - 1 + items.length) % items.length], true);
+
+        // NUEVO: respetar orden secuencial cuando hay filtro activo
+        if (window.__sequentialMode === true || !isShuffleOn()) {
+            let idx = items.indexOf(currentItem);
+            if (idx === -1) idx = 0;
+            loadItem(items[(idx - 1 + items.length) % items.length], true);
+            return;
+        }
+        playRandomItem();
     }
+
     document.addEventListener('omega:next', () => goNextItem());
     document.addEventListener('omega:prev', () => goPrevItem());
 
@@ -1552,7 +1572,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const list = getArtistItems(artistName);
             if (!list.length) return null;
             if (typeof setArtistFilter === 'function') setArtistFilter(list, artistName);
-            else { window.__artistFilter = list.slice(); window.__artistFilterName = artistName; }
+            else { window.__artistFilter = list.slice(); window.__artistFilterName = artistName; window.__sequentialMode = true; }
             return list;
         }
         function renderProfile(artistName) {
@@ -1600,7 +1620,7 @@ document.addEventListener('DOMContentLoaded', () => {
             apListen.onclick = () => {
                 const list = activateArtistMode(artistName);
                 if (!list || !list.length) return;
-                list[Math.floor(Math.random() * list.length)].click();
+                list[0].click();                 // ← NUEVO: comienza desde la primera canción del perfil
                 setTimeout(updatePlayingCard, 60);
             };
             if (refreshTimer) clearInterval(refreshTimer);
@@ -2467,6 +2487,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 })();
+
 /* ============================================================
    16. CERRAR SESIÓN
    ============================================================ */
@@ -3011,7 +3032,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const items = currentPlaylist.canciones.map(c => findItemByTitle(c.titulo)).filter(Boolean);
                 if (!items.length) return;
                 if (typeof setArtistFilter === 'function') setArtistFilter(items, currentPlaylist.nombre);
-                else { window.__artistFilter = items.slice(); window.__artistFilterName = currentPlaylist.nombre; }
+                else { window.__artistFilter = items.slice(); window.__artistFilterName = currentPlaylist.nombre; window.__sequentialMode = true; }
                 items[0].click();
                 setTimeout(refreshPlayingRows, 60);
             });
