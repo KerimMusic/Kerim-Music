@@ -9331,3 +9331,645 @@ document.addEventListener('DOMContentLoaded', () => {
         if (typeof clearArtistFilter === 'function') clearArtistFilter();
     };
 })();
+/* ============================================================
+   41. PERFIL DE ARTISTA Y ÁLBUM EN FORMA DE LISTA
+   ------------------------------------------------------------
+   Convierte la cuadrícula de canciones del perfil de artista
+   y la vista de álbum en listas verticales con portada + título
+   + subtítulo, sin romper ninguna función existente.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+    const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
+    function normName(s) {
+        if (typeof normalizeStr === 'function') return normalizeStr(s);
+        return String(s || '').toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function getArtistsFromItem(item) {
+        const sub = item.querySelector('.item-subtitle')?.textContent || '';
+        const idx = sub.indexOf('·');
+        const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+        if (!namePart) return [];
+        const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
+        return parts.length ? parts : [namePart];
+    }
+
+    function getArtistItems(artistName) {
+        const target = normName(artistName);
+        if (!target) return [];
+        const playlist = $('playlist');
+        if (!playlist) return [];
+        return Array.from(playlist.querySelectorAll('.playlist-item')).filter(item =>
+            getArtistsFromItem(item).some(n => normName(n) === target)
+        );
+    }
+
+    function makeArtistRow(item) {
+        const cover = item.querySelector('.thumbnail img')?.src || '';
+        const title = item.querySelector('.item-title')?.textContent.trim() || '';
+        const subtitle = item.querySelector('.item-subtitle')?.textContent.trim() || '';
+
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'ap-row';
+        row.dataset.title = title;
+
+        if (cover) {
+            const thumb = document.createElement('div');
+            thumb.className = 'ap-row-thumb';
+            const img = document.createElement('img');
+            img.src = cover;
+            img.alt = title;
+            img.loading = 'lazy';
+            thumb.appendChild(img);
+            row.appendChild(thumb);
+        }
+
+        const info = document.createElement('div');
+        info.className = 'ap-row-info';
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'ap-row-title';
+        titleEl.textContent = title;
+        info.appendChild(titleEl);
+
+        if (subtitle) {
+            const subEl = document.createElement('span');
+            subEl.className = 'ap-row-sub';
+            subEl.textContent = subtitle;
+            info.appendChild(subEl);
+        }
+
+        row.appendChild(info);
+        return row;
+    }
+
+    function renderArtistAsList(artistName) {
+        const apGrid = $('ap-grid');
+        if (!apGrid) return;
+        const items = getArtistItems(artistName);
+        if (!items.length) return;
+
+        apGrid.classList.add('ap-grid--list');
+        apGrid.innerHTML = '';
+
+        items.forEach(item => {
+            const row = makeArtistRow(item);
+            row.addEventListener('click', () => {
+                const list = getArtistItems(artistName);
+                if (typeof setArtistFilter === 'function') setArtistFilter(list, artistName);
+                item.click();
+                setTimeout(syncPlayingArtistRows, 60);
+            });
+            apGrid.appendChild(row);
+        });
+
+        syncPlayingArtistRows();
+    }
+
+    function syncPlayingArtistRows() {
+        const apGrid = $('ap-grid');
+        const playlist = $('playlist');
+        if (!apGrid || !playlist) return;
+        const active = playlist.querySelector('.playlist-item.active');
+        const activeTitle = active ? (active.querySelector('.item-title')?.textContent.trim() || '') : '';
+        apGrid.querySelectorAll('.ap-row').forEach(row => {
+            if (activeTitle && row.dataset.title === activeTitle) row.classList.add('playing');
+            else row.classList.remove('playing');
+        });
+    }
+
+    /* ---------- Override del perfil de artista ---------- */
+    const originalOpen = window.__openArtistProfile;
+    if (typeof originalOpen === 'function') {
+        window.__openArtistProfile = function (artistName) {
+            // 1) Dejar que la sección 5 abra la vista (visible, scroll, botones…)
+            originalOpen.call(this, artistName);
+
+            // 2) Reemplazar la cuadrícula por la lista
+            try { renderArtistAsList(artistName); }
+            catch (e) { console.warn('[ARTIST-LIST] Error:', e); }
+
+            // 3) Reescribir el botón "Escuchar mi música" para que siga funcionando
+            const listenBtn = $('ap-listen-btn');
+            if (listenBtn) {
+                listenBtn.onclick = () => {
+                    const list = getArtistItems(artistName);
+                    if (!list.length) return;
+                    if (typeof setArtistFilter === 'function') setArtistFilter(list, artistName);
+                    list[Math.floor(Math.random() * list.length)].click();
+                    setTimeout(syncPlayingArtistRows, 60);
+                };
+            }
+        };
+    }
+
+    /* ---------- Observer: estado "playing" en las filas ---------- */
+    function watchPlaylistForArtistRows() {
+        const playlist = $('playlist');
+        if (!playlist || playlist.dataset.artistRowsWatch === '1') return;
+        playlist.dataset.artistRowsWatch = '1';
+        const obs = new MutationObserver(() => {
+            const profile = $('artist-profile');
+            if (profile && profile.classList.contains('visible')) {
+                syncPlayingArtistRows();
+            }
+        });
+        obs.observe(playlist, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* ---------- Vista de álbum: forzar modo lista ---------- */
+    function forceAlbumListMode() {
+        const carousel = $('av-carousel');
+        const list = $('av-list');
+        const toggle = $('av-toggle');
+
+        if (carousel) {
+            carousel.classList.add('hidden');
+            carousel.style.display = 'none';
+        }
+        if (list) {
+            list.classList.add('visible');
+            list.style.display = 'block';
+        }
+        if (toggle) toggle.textContent = 'Modo de cuadrícula';
+    }
+
+    function watchAlbumView() {
+        const albumView = $('album-view');
+        if (!albumView || albumView.dataset.albumListWatch === '1') return;
+        albumView.dataset.albumListWatch = '1';
+
+        let lastVisible = false;
+        const obs = new MutationObserver(() => {
+            const visible = albumView.classList.contains('visible');
+            if (visible === lastVisible) return;
+            lastVisible = visible;
+            if (visible) forceAlbumListMode();
+        });
+        obs.observe(albumView, { attributes: true, attributeFilter: ['class'] });
+
+        // Botón de alternar: mantiene el toggle funcional
+        const toggle = $('av-toggle');
+        if (toggle && toggle.dataset.albumListToggle !== '1') {
+            toggle.dataset.albumListToggle = '1';
+            toggle.addEventListener('click', () => {
+                const carousel = $('av-carousel');
+                const list = $('av-list');
+                const isListVisible = list && (
+                    list.classList.contains('visible') ||
+                    list.style.display === 'block'
+                );
+                if (isListVisible) {
+                    if (list) { list.classList.remove('visible'); list.style.display = 'none'; }
+                    if (carousel) { carousel.classList.remove('hidden'); carousel.style.display = ''; }
+                    toggle.textContent = 'Modo de lista';
+                } else {
+                    if (carousel) { carousel.classList.add('hidden'); carousel.style.display = 'none'; }
+                    if (list) { list.classList.add('visible'); list.style.display = 'block'; }
+                    toggle.textContent = 'Modo de cuadrícula';
+                }
+            });
+        }
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        watchPlaylistForArtistRows();
+        watchAlbumView();
+
+        // Reintentos por si el DOM se construye más tarde
+        [500, 1500, 3000].forEach(ms => setTimeout(() => {
+            watchPlaylistForArtistRows();
+            watchAlbumView();
+        }, ms));
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+/* ============================================================
+   42. ORDEN SECUENCIAL EN PERFIL, ÁLBUM Y PLAYLIST
+   ------------------------------------------------------------
+   - "Escuchar mi música"      (Perfil)   → 1 → 2 → 3 → ...
+   - "Escuchar todo el álbum"  (Álbum)    → 1 → 2 → 3 → ...
+   - "Escuchar esta playlist"  (Playlist) → 1 → 2 → 3 → ...
+   Si el usuario toca una canción concreta, arranca desde ella
+   y continúa con las siguientes en orden (lo garantiza la cola
+   de la sección 40). No toca el botón de aleatorio.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+    const COLLAB_SPLIT = /\s+(?:ft\.?|feat\.?|featuring|con|&)\s+/i;
+
+    function norm(s) {
+        if (typeof normalizeStr === 'function') return normalizeStr(s);
+        return String(s || '').toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '');
+    }
+
+    function findItemByTitle(title) {
+        const pl = $('playlist');
+        if (!pl || !title) return null;
+        const target = norm(title);
+        if (!target) return null;
+        for (const it of pl.querySelectorAll('.playlist-item')) {
+            const t = it.querySelector('.item-title')?.textContent.trim() || '';
+            if (norm(t) === target) return it;
+        }
+        return null;
+    }
+
+    function getArtistItemsFromDom(artistName) {
+        const target = norm(artistName);
+        if (!target) return [];
+        const pl = $('playlist');
+        if (!pl) return [];
+        return Array.from(pl.querySelectorAll('.playlist-item')).filter(item => {
+            const sub = item.querySelector('.item-subtitle')?.textContent || '';
+            const idx = sub.indexOf('·');
+            const namePart = (idx === -1 ? sub : sub.slice(0, idx)).trim();
+            if (!namePart) return false;
+            const parts = namePart.split(COLLAB_SPLIT).map(s => s.trim()).filter(Boolean);
+            return (parts.length ? parts : [namePart]).some(n => norm(n) === target);
+        });
+    }
+
+    function getAlbumItemsFromDom(albumName) {
+        if (!albumName) return [];
+        const pl = $('playlist');
+        if (!pl) return [];
+        const needle = albumName.trim().toLowerCase();
+        const items = [];
+        pl.querySelectorAll('.playlist-item').forEach(it => {
+            const alb = it.querySelector('.Album')?.textContent.trim() || '';
+            if (alb && alb.toLowerCase() === needle) items.push(it);
+        });
+        return items;
+    }
+
+    /* Reproduce la lista completa en orden, arrancando desde startItem
+       (o desde la primera si no se pasa). Marca la cola como activa
+       para que la sección 40 avance secuencialmente en "ended". */
+    function playSequentialFrom(items, type, id, startItem) {
+        if (!Array.isArray(items) || !items.length) return;
+        const target = startItem || items[0];
+
+        try {
+            if (typeof window.__setPlaybackQueue === 'function') {
+                window.__setPlaybackQueue(items, type, id || '', target);
+            } else {
+                window.__artistFilter     = items.slice();
+                window.__artistFilterName = id || '';
+            }
+        } catch (_) {}
+
+        // Saltamos la re-detección de contexto: la cola ya está fijada.
+        window.__queueAdvancing = true;
+        try { target.click(); }
+        catch (err) { console.warn('[SEQUENTIAL] Error al reproducir:', err); }
+        finally {
+            setTimeout(() => { window.__queueAdvancing = false; }, 0);
+        }
+    }
+
+    /* ---------- 1) PLAYLIST: "Escuchar esta playlist" ---------- */
+    function hookPlaylistPlayAll() {
+        const btn = $('pv-play-all');
+        if (!btn || btn.dataset.seqPlayAll === '1') return;
+        btn.dataset.seqPlayAll = '1';
+
+        btn.addEventListener('click', (e) => {
+            const pl = window.__currentOpenPlaylist;
+            if (!pl || !Array.isArray(pl.canciones) || !pl.canciones.length) return;
+            const items = pl.canciones
+                .map(c => findItemByTitle(c.titulo))
+                .filter(Boolean);
+            if (!items.length) return;
+
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            e.preventDefault();
+
+            playSequentialFrom(items, 'playlist', pl.id || pl.nombre, items[0]);
+        }, true);
+    }
+
+    /* ---------- 2) ÁLBUM: "Escuchar todo el álbum" ---------- */
+    function hookAlbumPlayAll() {
+        const btn = $('av-play-all');
+        if (!btn || btn.dataset.seqPlayAll === '1') return;
+        btn.dataset.seqPlayAll = '1';
+
+        btn.addEventListener('click', (e) => {
+            const albumName = ($('av-title')?.textContent || '').trim();
+            if (!albumName) return;
+            const items = getAlbumItemsFromDom(albumName);
+            if (!items.length) return;
+
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            e.preventDefault();
+
+            playSequentialFrom(items, 'album', albumName, items[0]);
+        }, true);
+    }
+
+    /* ---------- 3) PERFIL: "Escuchar mi música" ---------- */
+    /* La sección 5 y la 41 sobrescriben `ap-listen-btn.onclick`.
+       Encadenamos después de ambas para dejar la versión secuencial. */
+    function hookArtistListenButton(artistName) {
+        const btn = $('ap-listen-btn');
+        if (!btn) return;
+        btn.onclick = null;   // limpia la versión aleatoria previa
+
+        const handler = (e) => {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            const items = getArtistItemsFromDom(artistName);
+            if (!items.length) return;
+            playSequentialFrom(items, 'artist', artistName, items[0]);
+        };
+        btn.onclick = handler;
+        // Por si algún otro código usa addEventListener en vez de onclick
+        btn.dataset.seqArtistBtn = '1';
+    }
+
+    // Envolvemos __openArtistProfile para reescribir el botón
+    // después de que la sección 41 lo haya tocado.
+    function wrapArtistProfile() {
+        const prev = window.__openArtistProfile;
+        if (typeof prev !== 'function' || prev.__seqWrapped) return;
+        const wrapped = function (artistName) {
+            prev.call(this, artistName);
+            // Sección 41 hace su override con setTimeout; esperamos un poco
+            // para quedar por encima.
+            setTimeout(() => hookArtistListenButton(artistName), 0);
+            setTimeout(() => hookArtistListenButton(artistName), 120);
+            setTimeout(() => hookArtistListenButton(artistName), 400);
+        };
+        wrapped.__seqWrapped = true;
+        window.__openArtistProfile = wrapped;
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        hookPlaylistPlayAll();
+        hookAlbumPlayAll();
+        wrapArtistProfile();
+
+        // Reintentos por si el DOM se construye tarde
+        [500, 1500, 3000].forEach(ms => setTimeout(() => {
+            hookPlaylistPlayAll();
+            hookAlbumPlayAll();
+            wrapArtistProfile();
+        }, ms));
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+/* ============================================================
+   43. SINCRONIZACIÓN: ELIMINAR PLAYLIST / CANCIÓN → ELIMINAR DESCARGAS
+   ------------------------------------------------------------
+   - Al eliminar una playlist completa desde "Mi Playlist" se
+     eliminan automáticamente las descargas (IndexedDB) de sus
+     canciones, EXCEPTO las que sigan perteneciendo a otra
+     playlist del usuario.
+   - Al eliminar una canción individual en el modo edición de
+     "Mi Playlist" se elimina su descarga, con la misma regla
+     de seguridad.
+   No elimina canciones de Firebase ni afecta a otros usuarios.
+   No modifica ninguna función existente.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const DB_NAME     = 'OmegaBeatsOffline';
+    const DB_VERSION  = 1;
+    const STORE_NAME  = 'canciones';
+
+    const $ = (id) => document.getElementById(id);
+
+    /* ---------- Utilidades ---------- */
+    function normId(str) {
+        return String(str || '').toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '_');
+    }
+
+    /* ---------- IndexedDB: eliminar descarga local ---------- */
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(DB_NAME, DB_VERSION);
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror   = () => reject(req.error);
+        });
+    }
+
+    async function deleteDownloadOffline(titulo) {
+        if (!titulo) return;
+        const id = normId(titulo);
+        try {
+            const db = await openDB();
+            await new Promise((res, rej) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).delete(id);
+                tx.oncomplete = () => res();
+                tx.onerror    = () => rej(tx.error);
+            });
+            console.log('[SYNC-DELETE] Descarga eliminada:', titulo);
+        } catch (e) {
+            console.warn('[SYNC-DELETE] Error eliminando descarga:', titulo, e);
+        }
+    }
+
+    /* ---------- Firestore: playlists que aún contienen la canción ---------- */
+    async function getPlaylistsContaining(titulo) {
+        const user = firebase.auth().currentUser;
+        if (!user || !titulo) return [];
+        try {
+            const snap = await firebase.firestore()
+                .collection('mis_playlists')
+                .where('uid', '==', user.uid)
+                .get();
+            const out = [];
+            snap.forEach(doc => {
+                const d = doc.data() || {};
+                const canciones = Array.isArray(d.canciones) ? d.canciones : [];
+                if (canciones.some(c => c && c.titulo === titulo)) out.push(doc.id);
+            });
+            return out;
+        } catch (e) {
+            console.warn('[SYNC-DELETE] Error consultando playlists:', e);
+            return [];
+        }
+    }
+
+    /* Elimina la descarga sólo si la canción no sigue en otra playlist
+       del usuario (excluyendo la playlist que se está manipulando). */
+    async function safeDeleteDownload(titulo, currentPlaylistId) {
+        if (!titulo) return;
+        try {
+            const otras = await getPlaylistsContaining(titulo);
+            const restantes = otras.filter(id => id !== currentPlaylistId);
+            if (restantes.length === 0) {
+                await deleteDownloadOffline(titulo);
+            } else {
+                console.log('[SYNC-DELETE] Conservada (en otras playlists):', titulo, restantes);
+            }
+        } catch (e) {
+            console.warn('[SYNC-DELETE] safeDeleteDownload:', e);
+        }
+    }
+
+    /* ============================================================
+       CASO 1: Eliminar playlist completa desde "Mi Playlist"
+       Se ejecuta cuando se confirma el diálogo de borrado.
+       ============================================================ */
+    function hookWholePlaylistDelete() {
+        const observer = new MutationObserver(() => {
+            const box = document.querySelector('.conv-menu-backdrop .conv-confirm-box');
+            if (!box) return;
+
+            const title = (box.querySelector('.conv-confirm-title')?.textContent || '').trim();
+            if (!/eliminar\s+playlist/i.test(title)) return;
+
+            const yesBtn = box.querySelector('.conv-confirm-actions .yes');
+            if (!yesBtn || yesBtn.dataset.syncDeleteHooked === '1') return;
+            yesBtn.dataset.syncDeleteHooked = '1';
+
+            // Capturamos la playlist ANTES de que el handler original la borre.
+            yesBtn.addEventListener('click', async () => {
+                const pl = window.__currentOpenPlaylist;
+                if (!pl || !Array.isArray(pl.canciones) || !pl.canciones.length) return;
+
+                const canciones = pl.canciones.slice();
+                const plId = pl.id || '';
+
+                console.log('[SYNC-DELETE] Playlist eliminada → limpiando descargas de', canciones.length, 'canciones');
+
+                for (const c of canciones) {
+                    if (!c || !c.titulo) continue;
+                    await safeDeleteDownload(c.titulo, plId);
+                }
+            }, true);
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    /* ============================================================
+       CASO 2: Eliminar canción individual en modo edición
+       Registramos los .pv-row.removed y luego, al pulsar
+       "Guardar cambios", limpiamos la descarga correspondiente.
+       ============================================================ */
+    const removedSnapshot = new Set();
+
+    function trackRemovedRows() {
+        const pvList = $('pv-list');
+        if (!pvList || pvList.dataset.syncDeleteTracked === '1') return;
+        pvList.dataset.syncDeleteTracked = '1';
+
+        const obs = new MutationObserver(() => {
+            pvList.querySelectorAll('.pv-row.removed').forEach(row => {
+                const t = row.dataset.title;
+                if (t) removedSnapshot.add(t);
+            });
+        });
+        obs.observe(pvList, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style']
+        });
+    }
+
+    function hookIndividualSongSave() {
+        const saveBtn = $('pv-save');
+        if (!saveBtn || saveBtn.dataset.syncDeleteHooked === '1') return;
+        saveBtn.dataset.syncDeleteHooked = '1';
+
+        // Capture: corremos antes del handler original de "Guardar cambios".
+        saveBtn.addEventListener('click', async () => {
+            if (!removedSnapshot.size) return;
+
+            const pl = window.__currentOpenPlaylist;
+            const plId = pl && pl.id ? pl.id : '';
+
+            const titulos = Array.from(removedSnapshot);
+            removedSnapshot.clear();
+
+            console.log('[SYNC-DELETE] Canciones eliminadas de la playlist:', titulos);
+
+            for (const titulo of titulos) {
+                await safeDeleteDownload(titulo, plId);
+            }
+        }, true);
+    }
+
+    /* Limpieza cuando se sale del modo edición sin guardar */
+    function hookEditModeExit() {
+        const view = $('playlist-view');
+        if (!view || view.dataset.syncDeleteExit === '1') return;
+        view.dataset.syncDeleteExit = '1';
+
+        let wasEditMode = false;
+        const obs = new MutationObserver(() => {
+            const isEdit = view.classList.contains('edit-mode');
+            if (wasEditMode && !isEdit) {
+                // Al salir del modo edición (guardar o cancelar), limpiamos
+                // cualquier sobrante del snapshot. El botón Cancelar no
+                // dispara 'pv-save', así que no borrará descargas.
+                removedSnapshot.clear();
+            }
+            wasEditMode = isEdit;
+        });
+        obs.observe(view, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* ---------- Init ---------- */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+        hookWholePlaylistDelete();
+        trackRemovedRows();
+        hookIndividualSongSave();
+        hookEditModeExit();
+
+        [500, 1500, 3000].forEach(ms => setTimeout(() => {
+            hookWholePlaylistDelete();
+            trackRemovedRows();
+            hookIndividualSongSave();
+            hookEditModeExit();
+        }, ms));
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
