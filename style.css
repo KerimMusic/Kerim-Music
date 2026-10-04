@@ -1,3 +1,6 @@
+/* ============================================================
+   ESTILOS BASE
+   ============================================================ */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -676,47 +679,16 @@ button:active { opacity: 0.72; }
 .fs-like.active { color: #ff2a2a; }
 .fs-like.active svg { fill: #ff2a2a; stroke: #ff2a2a; }
 
-/* ============================================================
-   ESTADOS DEL BOTÓN #fs-like (DESCARGA OFFLINE)
-   ============================================================ */
+.fs-like.downloaded { color: #4ade80 !important; }
+.fs-like.downloaded svg { width: 46px; height: 46px; fill: none; }
+.fs-like.downloaded svg polyline { stroke: #4ade80 !important; stroke-width: 3.2; fill: none; }
+.fs-like.downloaded span { color: #4ade80 !important; }
 
-/* Estado DESCARGADA: check verde grande */
-.fs-like.downloaded {
-    color: #4ade80 !important;
-}
-.fs-like.downloaded svg {
-    width: 46px;
-    height: 46px;
-    fill: none;
-}
-.fs-like.downloaded svg polyline {
-    stroke: #4ade80 !important;
-    stroke-width: 3.2;
-    fill: none;
-}
-.fs-like.downloaded span {
-    color: #4ade80 !important;
-}
+.fs-like.processing { opacity: 0.9; pointer-events: none; color: #ff2a2a !important; }
+.fs-like.processing svg { stroke: #ff2a2a !important; fill: none !important; animation: fs-like-spin 0.9s linear infinite; }
+.fs-like.processing span { color: #ff2a2a !important; }
 
-/* Estado DESCARGANDO: spinner rojo */
-.fs-like.processing {
-    opacity: 0.9;
-    pointer-events: none;
-    color: #ff2a2a !important;
-}
-.fs-like.processing svg {
-    stroke: #ff2a2a !important;
-    fill: none !important;
-    animation: fs-like-spin 0.9s linear infinite;
-}
-.fs-like.processing span {
-    color: #ff2a2a !important;
-}
-
-@keyframes fs-like-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-}
+@keyframes fs-like-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 #omega-toast {
     position: fixed;
@@ -1048,9 +1020,6 @@ button:active { opacity: 0.72; }
 
 .app-container.auth-locked { pointer-events: none; user-select: none; filter: blur(6px); transition: filter 0.35s ease; }
 
-/* ============================================================
-   RESULTADOS DE BÚSQUEDA
-   ============================================================ */
 .search-results { margin: 0 -20px; padding: 6px 0 20px; }
 .search-section { padding: 0 20px; margin-bottom: 20px; }
 .search-section-title { font-size: 18px; font-weight: 800; color: #ffffff; margin: 6px 0 10px; }
@@ -1079,9 +1048,6 @@ button:active { opacity: 0.72; }
 .search-empty-title { font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 6px; }
 .search-empty-sub { font-size: 13px; color: #999999; }
 
-/* ============================================================
-   PLAYLIST COLLAGE
-   ============================================================ */
 .home-card--playlist .home-card-thumb.playlist-collage {
     display: grid !important;
     grid-template-columns: 1fr 1fr;
@@ -1091,9 +1057,6 @@ button:active { opacity: 0.72; }
 .playlist-collage-cell { width: 100%; height: 100%; overflow: hidden; background: #2a2a2a; }
 .playlist-collage-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* ============================================================
-   VISTA DE PLAYLIST (detalle)
-   ============================================================ */
 .playlist-view {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 81px;
@@ -1212,9 +1175,6 @@ button:active { opacity: 0.72; }
 .pv-cancel { background: #2a2a2a; color: #ffffff; }
 .pv-save:active:not(:disabled), .pv-cancel:active { transform: scale(0.96); opacity: 0.9; }
 
-/* ============================================================
-   MODAL COMPARTIR PLAYLIST
-   ============================================================ */
 .share-modal {
     position: fixed;
     inset: 0;
@@ -1287,10 +1247,6 @@ button:active { opacity: 0.72; }
 .share-user-row--already .share-user-action { color: #ff4d4d; font-weight: 800; }
 .share-user-row--already { background: rgba(255, 60, 60, 0.06); border: 1px solid rgba(255, 60, 60, 0.18); }
 .share-user-row--recent { background: rgba(255, 42, 42, 0.05); }
-
-/* ============================================================
-   MI PLAYLIST (vista, crear, público/privado, añadir)
-   ============================================================ */
 
 .mi-playlist-view {
     position: absolute;
@@ -1597,10 +1553,6 @@ button:active { opacity: 0.72; }
     color: #ff2a2a;
     font-weight: 800;
 }
-
-/* ============================================================
-   MENSAJES DIRECTOS
-   ============================================================ */
 
 .msg-badge {
     display: inline-flex;
@@ -2034,9 +1986,6 @@ button:active { opacity: 0.72; }
     font-size: 14px;
 }
 
-/* ============================================================
-   PRIVACIDAD DEL CORREO
-   ============================================================ */
 .name-email-privacy {
     padding: 14px 4px 4px;
     margin-top: 12px;
@@ -2086,18 +2035,12 @@ button:active { opacity: 0.72; }
     letter-spacing: 0.2px;
 }
 
-/* ============================================================
-   33. BÚSQUEDA POR GÉNERO Y PLAYLISTS PÚBLICAS
-   ============================================================ */
 .search-section--genres .search-card-thumb,
 .search-section--public-playlists .search-card-thumb {
     box-shadow: 0 4px 14px rgba(255, 42, 42, 0.20),
                 0 0 0 1px rgba(255, 42, 42, 0.28);
 }
 
-/* ============================================================
-   35. ELIMINAR PLAYLIST DESDE "EDITAR"
-   ============================================================ */
 .pv-delete-playlist {
     flex: 1;
     max-width: 420px;
@@ -2124,9 +2067,6 @@ button:active { opacity: 0.72; }
     }
 }
 
-/* ============================================================
-   36. COLABORADORES EN EL REPRODUCTOR FULLSCREEN
-   ============================================================ */
 .fs-collabs {
     position: absolute;
     top: 14px;
@@ -2240,9 +2180,6 @@ button:active { opacity: 0.72; }
     text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
 }
 
-/* ============================================================
-   CONTADOR DE ANUNCIOS
-   ============================================================ */
 #ad-overlay .ad-counter {
     font-size: 11.5px;
     color: rgba(255, 255, 255, 0.75);
@@ -2252,9 +2189,6 @@ button:active { opacity: 0.72; }
     margin-top: -10px;
 }
 
-/* ============================================================
-   BOTTOM NAVIGATION BAR
-   ============================================================ */
 .bottom-nav {
     position: absolute;
     bottom: 0;
@@ -2327,13 +2261,7 @@ button:active { opacity: 0.72; }
         border-radius: 0 0 12px 12px;
     }
 }
-/* ============================================================
-   FIX: SCROLL TÁCTIL FLUIDO EN MÓVILES
-   Permite deslizar desde cualquier punto, incluido sobre portadas.
-   No modifica diseño ni lógica existente.
-   ============================================================ */
 
-/* --- Contenedores con scroll vertical: gesto fluido desde cualquier punto --- */
 .playlist,
 .home-view,
 .search-results,
@@ -2351,7 +2279,6 @@ button:active { opacity: 0.72; }
     overscroll-behavior: contain;
 }
 
-/* --- Items de la lista y sus hijos: permitir scroll vertical aunque toquen la portada --- */
 .playlist-item,
 .playlist-item *,
 .thumbnail,
@@ -2364,7 +2291,6 @@ button:active { opacity: 0.72; }
     touch-action: pan-y;
 }
 
-/* --- Carruseles horizontales: permitir tanto pan-x como pan-y (antes solo pan-x) --- */
 .home-carousel,
 .home-carousel *,
 .av-carousel,
@@ -2372,7 +2298,6 @@ button:active { opacity: 0.72; }
     touch-action: pan-x pan-y;
 }
 
-/* --- Todas las imágenes: no capturan el gesto táctil ni permiten arrastre nativo --- */
 img {
     -webkit-user-drag: none;
     user-drag: none;
@@ -2381,29 +2306,23 @@ img {
     user-select: none;
 }
 
-/* --- El reproductor fullscreen conserva su sistema de gestos --- */
 .fs-player,
 .fs-player * {
     touch-action: none;
 }
 
-/* --- La barra de progreso sí necesita su propio touch (seek) --- */
 .progress-bar,
 .progress-bar * {
     touch-action: none;
     pointer-events: auto;
 }
 
-/* --- Inputs y textareas recuperan el comportamiento táctil normal --- */
 input,
 textarea {
     touch-action: auto;
     pointer-events: auto;
 }
 
-/* ============================================================
-   39. VISTA DE ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA
-   ============================================================ */
 .stats-view {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 81px;
@@ -2551,3 +2470,93 @@ textarea {
 .st-empty { text-align: center; padding: 40px 20px; }
 .st-empty-title { font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 6px; }
 .st-empty-sub   { font-size: 13px; color: #999999; }
+
+/* ============================================================
+   SISTEMA DE COLA OFFLINE - INDICADORES VISUALES
+   ============================================================ */
+
+#omega-queue-badge {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translate(-50%, -120%);
+    background: rgba(255, 170, 0, 0.96);
+    color: #1a1a1a;
+    padding: 8px 16px;
+    border-radius: 50px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    box-shadow: 0 8px 24px rgba(255, 170, 0, 0.4);
+    z-index: 11000;
+    pointer-events: none;
+    transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+                opacity 0.3s ease;
+    opacity: 0;
+    white-space: nowrap;
+    max-width: 90vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#omega-queue-badge.visible {
+    transform: translate(-50%, 0);
+    opacity: 1;
+}
+
+#offline-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 100px;
+    transform: translate(-50%, 20px);
+    background: rgba(255, 170, 0, 0.96);
+    color: #1a1a1a;
+    padding: 14px 20px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 700;
+    max-width: 88%;
+    width: max-content;
+    text-align: center;
+    box-shadow: 0 12px 32px rgba(255, 170, 0, 0.45);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+    z-index: 3000;
+    pointer-events: none;
+    word-wrap: break-word;
+}
+#offline-toast.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+}
+
+body.offline-mode .player {
+    box-shadow: 0 -6px 28px rgba(255, 170, 0, 0.25),
+                0 -2px 12px rgba(255, 170, 0, 0.15);
+}
+body.offline-mode .player::before {
+    content: "OFFLINE";
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: rgba(255, 170, 0, 0.85);
+    pointer-events: none;
+}
+
+body.offline-mode .top-bar::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(255, 170, 0, 0.7) 50%,
+        transparent 100%);
+    pointer-events: none;
+}
