@@ -622,11 +622,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function getCandidateItems() {
         const all = getAllItems();
+        let candidates = all;
         if (window.__artistFilter && window.__artistFilter.length) {
             const filtered = all.filter(i => window.__artistFilter.includes(i));
-            if (filtered.length) return filtered;
+            if (filtered.length) candidates = filtered;
         }
-        return all;
+        // FIX OFFLINE: sin conexión solo se consideran canciones descargadas (offline)
+        if (!hayConexion()) {
+            candidates = candidates.filter(i => esRecursoLocal(i));
+        }
+        return candidates;
     }
     function loadItem(item, autoplay = true) {
         if (!item) return;
@@ -744,11 +749,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const completed = !!duration && isFinite(duration) && played >= (duration - 1.5);
         updateIcon(false); updateProgress(0);
         if (currentTimeEl) currentTimeEl.textContent = '0:00';
-        if (completed && currentItem) {
+        if (completed && currentItem && hayConexion()) {
+            // FIX OFFLINE: no bloquear el salto de canción cuando no hay conexión
             const titulo = getItemTitle(currentItem);
             const user = firebase.auth().currentUser;
-            if (titulo && user && esNuevoOyente(titulo, user.uid)) await registrarOyente(titulo);
-            if (titulo && user && typeof window.__guardarEnPlaylist === 'function') await window.__guardarEnPlaylist(titulo);
+            if (titulo && user && esNuevoOyente(titulo, user.uid)) {
+                registrarOyente(titulo).catch(() => {});
+            }
+            if (titulo && user && typeof window.__guardarEnPlaylist === 'function') {
+                window.__guardarEnPlaylist(titulo).catch(() => {});
+            }
         }
         playRandomItem();
     });
@@ -9015,276 +9025,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         watchOtherViews();
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-})();
-
-/* ============================================================
-   40. REPRODUCCIÓN OFFLINE EN MI PLAYLIST
-   ------------------------------------------------------------
-   Cuando no hay conexión, si una canción de "Mi Playlist" no
-   existe como .playlist-item en #playlist (porque Firestore no
-   la cargó), se reconstruye desde IndexedDB (la copia descargada
-   por la sección 38) y se marca como recurso local, de modo que
-   el reproductor la trate exactamente igual que con conexión.
-
-   No modifica ninguna sección existente: solo añade ítems que
-   faltan ANTES de que la sección 18 intente renderizar las filas.
-   ============================================================ */
-(function () {
-    'use strict';
-
-    const DB_NAME     = 'OmegaBeatsOffline';
-    const DB_VERSION  = 1;
-    const STORE_NAME  = 'canciones';
-    const PLACEHOLDER = 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
-
-    /* ---------- Utilidades ---------- */
-    function normId(str) {
-        return String(str || '').toLowerCase()
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]/g, '_');
-    }
-    function normTitle(str) {
-        if (typeof normalizeStr === 'function') return normalizeStr(str);
-        return String(str || '').toLowerCase()
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9]/g, '');
-    }
-    function haptic(ms) {
-        if (navigator.vibrate) { try { navigator.vibrate(ms || 10); } catch (_) {} }
-    }
-
-    /* ---------- IndexedDB ---------- */
-    let dbPromise = null;
-    function openDB() {
-        if (dbPromise) return dbPromise;
-        dbPromise = new Promise((resolve, reject) => {
-            const req = indexedDB.open(DB_NAME, DB_VERSION);
-            req.onupgradeneeded = (e) => {
-                const db = e.target.result;
-                if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-                }
-            };
-            req.onsuccess = () => resolve(req.result);
-            req.onerror   = () => reject(req.error);
-        });
-        return dbPromise;
-    }
-    async function dbGet(id) {
-        try {
-            const db = await openDB();
-            return await new Promise((res, rej) => {
-                const tx = db.transaction(STORE_NAME, 'readonly');
-                const r  = tx.objectStore(STORE_NAME).get(id);
-                r.onsuccess = () => res(r.result);
-                r.onerror   = () => rej(r.error);
-            });
-        } catch (_) { return null; }
-    }
-
-    const audioURLCache = new Map();
-    const coverURLCache = new Map();
-
-    async function getAudioBlobUrl(titulo) {
-        const id = normId(titulo);
-        if (audioURLCache.has(id)) return audioURLCache.get(id);
-        const rec = await dbGet(id);
-        if (!rec || !rec.audio) return null;
-        const url = URL.createObjectURL(rec.audio);
-        audioURLCache.set(id, url);
-        return url;
-    }
-    async function getCoverBlobUrl(titulo) {
-        const id = normId(titulo);
-        if (coverURLCache.has(id)) return coverURLCache.get(id);
-        const rec = await dbGet(id);
-        if (!rec || !rec.portada) return null;
-        const url = URL.createObjectURL(rec.portada);
-        coverURLCache.set(id, url);
-        return url;
-    }
-
-    /* ---------- Buscar ítem existente en #playlist ---------- */
-    function findMainItemByTitle(title) {
-        const pl = document.getElementById('playlist');
-        if (!pl) return null;
-        const target = normTitle(title);
-        if (!target) return null;
-        for (const it of pl.querySelectorAll('.playlist-item')) {
-            const t = it.querySelector('.item-title')?.textContent.trim() || '';
-            if (normTitle(t) === target) return it;
-        }
-        return null;
-    }
-
-    /* ---------- Construir un .playlist-item offline ---------- */
-    function buildOfflineItem({ titulo, portadaUrl, subtitulo, audioUrl }) {
-        const div = document.createElement('div');
-        div.className = 'playlist-item';
-        div.dataset.src = audioUrl;
-        div.dataset.offline = '1';
-        div.dataset.title = titulo;
-        div.dataset.fromMP = '1'; // marcador para no interferir con otras secciones
-
-        const thumb = document.createElement('div');
-        thumb.className = 'thumbnail';
-        const img = document.createElement('img');
-        img.src = portadaUrl || PLACEHOLDER;
-        img.alt = 'Portada';
-        img.loading = 'lazy';
-        img.onerror = function () {
-            this.onerror = null;
-            this.src = PLACEHOLDER;
-        };
-        thumb.appendChild(img);
-        div.appendChild(thumb);
-
-        const info = document.createElement('div');
-        info.className = 'item-info';
-        const titleSpan = document.createElement('span');
-        titleSpan.className = 'item-title';
-        titleSpan.textContent = titulo;
-        info.appendChild(titleSpan);
-        const subSpan = document.createElement('span');
-        subSpan.className = 'item-subtitle';
-        subSpan.textContent = subtitulo || '';
-        info.appendChild(subSpan);
-        div.appendChild(info);
-
-        return div;
-    }
-
-    /* ---------- Asegurar que existan los ítems faltantes ---------- */
-    async function ensurePlaylistItemsExist(playlist) {
-        if (!playlist || !Array.isArray(playlist.canciones) || !playlist.canciones.length) return;
-
-        const pl = document.getElementById('playlist');
-        if (!pl) return;
-
-        const isOffline = navigator.onLine === false;
-        const frag = document.createDocumentFragment();
-        let added = 0;
-        let swapped = 0;
-
-        for (const c of playlist.canciones) {
-            const titulo = c && c.titulo ? c.titulo : '';
-            if (!titulo) continue;
-
-            const existing = findMainItemByTitle(titulo);
-
-            if (existing) {
-                // Si estamos sin conexión y el ítem aún apunta a un recurso remoto,
-                // lo cambiamos por el blob local para que se pueda reproducir.
-                if (isOffline && existing.dataset.offline !== '1') {
-                    const audioUrl = await getAudioBlobUrl(titulo);
-                    if (audioUrl) {
-                        if (!existing.dataset.remoteSrc) {
-                            existing.dataset.remoteSrc = existing.dataset.src || '';
-                        }
-                        existing.dataset.src = audioUrl;
-                        existing.dataset.offline = '1';
-                        // También cambiamos la portada si tenemos el blob descargado
-                        const coverUrl = await getCoverBlobUrl(titulo);
-                        if (coverUrl) {
-                            const coverImg = existing.querySelector('.thumbnail img');
-                            if (coverImg) coverImg.src = coverUrl;
-                        }
-                        swapped++;
-                    }
-                }
-                continue;
-            }
-
-            // El ítem no existe. Solo tiene sentido crearlo si estamos offline
-            // (si estamos online, Firestore acabará de cargarlo).
-            if (!isOffline) continue;
-
-            const audioUrl = await getAudioBlobUrl(titulo);
-            if (!audioUrl) continue; // No está descargada → no se puede reproducir offline
-
-            const coverBlobUrl = await getCoverBlobUrl(titulo);
-            const coverUrl = coverBlobUrl || c.portada || '';
-
-            const item = buildOfflineItem({
-                titulo,
-                portadaUrl: coverUrl,
-                subtitulo: c.subtitulo || '',
-                audioUrl
-            });
-            frag.appendChild(item);
-            added++;
-        }
-
-        if (added > 0) {
-            // Insertamos los ítems justo después de #home-view, igual que
-            // hacen las secciones 13 y 14 con las subidas.
-            const homeView = pl.querySelector('#home-view');
-            if (homeView && homeView.nextSibling) {
-                pl.insertBefore(frag, homeView.nextSibling);
-            } else if (homeView) {
-                pl.appendChild(frag);
-            } else {
-                pl.insertBefore(frag, pl.firstChild);
-            }
-
-            try {
-                if (typeof window.__applySearchVisibility === 'function') {
-                    window.__applySearchVisibility();
-                }
-            } catch (_) {}
-        }
-
-        if (added || swapped) {
-            console.log('[OFFLINE-MP] Añadidos:', added, '| Adaptados a local:', swapped);
-        }
-    }
-
-    /* ---------- Envolver window.__openPlaylistView ---------- */
-    function wrapOpenPlaylistView() {
-        if (typeof window.__openPlaylistView !== 'function') return false;
-        if (window.__openPlaylistView.__offlineMPWrapped) return true;
-
-        const orig = window.__openPlaylistView;
-        const wrapped = function (pl) {
-            const args = arguments;
-            const self = this;
-            // Primero aseguramos los ítems (asíncrono), después abrimos la vista
-            // con el comportamiento original intacto.
-            Promise.resolve()
-                .then(() => ensurePlaylistItemsExist(pl))
-                .catch(e => console.warn('[OFFLINE-MP] ensure falló:', e))
-                .then(() => {
-                    try { orig.apply(self, args); }
-                    catch (e) { console.warn('[OFFLINE-MP] openPlaylistView falló:', e); }
-                });
-        };
-        wrapped.__offlineMPWrapped = true;
-        window.__openPlaylistView = wrapped;
-        return true;
-    }
-
-    /* ---------- Init ---------- */
-    function init() {
-        if (typeof firebase === 'undefined' || !firebase.auth) {
-            setTimeout(init, 300);
-            return;
-        }
-        let attempts = 0;
-        (function loop() {
-            attempts++;
-            if (wrapOpenPlaylistView()) {
-                console.log('[OFFLINE-MP] Wrapper instalado correctamente');
-                return;
-            }
-            if (attempts < 40) setTimeout(loop, 250);
-        })();
     }
 
     if (document.readyState === 'loading') {
