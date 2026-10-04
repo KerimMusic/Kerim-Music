@@ -193,36 +193,15 @@ async function registrarOyente(nombreCancion) {
     oyentesCache[nombreCancion][uid] = new Date();
     const item = buscarItemPorTitulo(nombreCancion);
     if (item) pintarReproducciones(item, contarOyentes(nombreCancion));
-
-    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-        await window.OmegaQueue.enqueue({
-            tipo: 'oyente',
-            data: { nombreCancion: nombreCancion, uid: uid }
-        });
-        return;
-    }
-
     try {
         const docRef = db.collection('oyentes_canciones').doc(nombreCancion);
         const docSnap = await docRef.get();
         if (docSnap.exists) {
-            const upd = {};
-            upd['oyentes.' + uid] = firebase.firestore.FieldValue.serverTimestamp();
-            await docRef.update(upd);
+            await docRef.update({ [`oyentes.${uid}`]: firebase.firestore.FieldValue.serverTimestamp() });
         } else {
-            const obj = {};
-            obj[uid] = firebase.firestore.FieldValue.serverTimestamp();
-            await docRef.set({ oyentes: obj });
+            await docRef.set({ oyentes: { [uid]: firebase.firestore.FieldValue.serverTimestamp() } });
         }
-    } catch (e) {
-        console.error('Error al registrar oyente:', e);
-        if (window.OmegaQueue) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'oyente',
-                data: { nombreCancion: nombreCancion, uid: uid }
-            });
-        }
-    }
+    } catch (e) { console.error('Error al registrar oyente:', e); }
 }
 
 async function cargarOyentesCancion(nombreCancion) {
@@ -295,37 +274,19 @@ async function guardarEnHistorial(titulo) {
     const user = firebase.auth().currentUser;
     if (!user || !titulo) return;
     historialCache = historialCache.filter(c => c.titulo !== titulo);
-    historialCache.unshift({ titulo: titulo, fecha: new Date() });
+    historialCache.unshift({ titulo, fecha: new Date() });
     if (historialCache.length > MAX_HISTORIAL) historialCache.length = MAX_HISTORIAL;
     if (typeof window.__buildListenAgain === 'function') window.__buildListenAgain();
-
-    const nuevasCanciones = historialCache.map(c => ({
-        titulo: c.titulo,
-        fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
-    }));
-
-    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-        await window.OmegaQueue.enqueue({
-            tipo: 'historial',
-            data: { canciones: nuevasCanciones }
-        });
-        return;
-    }
-
     try {
         const docRef = db.collection('historial_usuarios').doc(user.uid);
         const docSnap = await docRef.get();
+        const nuevasCanciones = historialCache.map(c => ({
+            titulo: c.titulo,
+            fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
+        }));
         if (docSnap.exists) await docRef.update({ canciones: nuevasCanciones });
         else await docRef.set({ canciones: nuevasCanciones });
-    } catch (e) {
-        console.warn('Error al guardar historial, encolando:', e);
-        if (window.OmegaQueue) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'historial',
-                data: { canciones: nuevasCanciones }
-            });
-        }
-    }
+    } catch (e) { console.warn('Error al guardar historial:', e); }
 }
 
 window.__cargarHistorialUsuario = cargarHistorialUsuario;
@@ -371,42 +332,25 @@ async function cargarPlaylistsUsuario() {
 async function guardarCompletadasEnHistorial() {
     const user = firebase.auth().currentUser;
     if (!user) return;
-    const dataToSave = {
-        canciones_completadas: completadasCache.map(c => ({
-            titulo: c.titulo,
-            fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
-        }))
-    };
-
-    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-        await window.OmegaQueue.enqueue({
-            tipo: 'completadas',
-            data: dataToSave
-        });
-        return;
-    }
-
     try {
         const docRef = db.collection('historial_usuarios').doc(user.uid);
         const docSnap = await docRef.get();
+        const dataToSave = {
+            canciones_completadas: completadasCache.map(c => ({
+                titulo: c.titulo,
+                fecha: firebase.firestore.Timestamp.fromDate(c.fecha)
+            }))
+        };
         if (docSnap.exists) await docRef.update(dataToSave);
         else await docRef.set(dataToSave);
-    } catch (e) {
-        console.warn('Error al guardar completadas:', e);
-        if (window.OmegaQueue) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'completadas',
-                data: dataToSave
-            });
-        }
-    }
+    } catch (e) { console.warn('Error al guardar completadas:', e); }
 }
 
 async function guardarEnPlaylist(titulo) {
     const user = firebase.auth().currentUser;
     if (!user || !titulo) return;
     completadasCache = completadasCache.filter(c => c.titulo !== titulo);
-    completadasCache.push({ titulo: titulo, fecha: new Date() });
+    completadasCache.push({ titulo, fecha: new Date() });
     if (completadasCache.length > MAX_COMPLETADAS) completadasCache = completadasCache.slice(-MAX_COMPLETADAS);
     await guardarCompletadasEnHistorial();
     if (typeof window.__buildListenAgain === 'function') window.__buildListenAgain();
@@ -422,7 +366,7 @@ function computePlaylistsFromCompletadas() {
         const plId = 'pl_' + idx;
         const exclusions = playlistsExclusionsCache[plId] || {};
         const excluidas = Array.isArray(exclusions.excluidas) ? exclusions.excluidas : [];
-        const cancionesFiltradas = chunk.filter(c => excluidas.indexOf(c.titulo) === -1);
+        const cancionesFiltradas = chunk.filter(c => !excluidas.includes(c.titulo));
         if (!cancionesFiltradas.length) continue;
         playlists.push({
             id: plId,
@@ -445,73 +389,41 @@ window.__guardarEdicionPlaylist = async function (playlist, excluidas) {
     if (!playlistsExclusionsCache[playlist.id]) playlistsExclusionsCache[playlist.id] = {};
     const previas = Array.isArray(playlistsExclusionsCache[playlist.id].excluidas)
         ? playlistsExclusionsCache[playlist.id].excluidas : [];
-    playlistsExclusionsCache[playlist.id].excluidas =
-        Array.from(new Set(previas.concat(excluidas)));
-
-    if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-        await window.OmegaQueue.enqueue({
-            tipo: 'playlist_edits',
-            data: { playlists_edits: playlistsExclusionsCache }
-        });
-        return;
-    }
-
+    playlistsExclusionsCache[playlist.id].excluidas = Array.from(new Set([...previas, ...excluidas]));
     try {
         const docRef = db.collection('historial_usuarios').doc(user.uid);
         await docRef.set({ playlists_edits: playlistsExclusionsCache }, { merge: true });
-    } catch (e) {
-        if (window.OmegaQueue) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'playlist_edits',
-                data: { playlists_edits: playlistsExclusionsCache }
-            });
-        }
-    }
+    } catch (e) { throw e; }
 
     try {
-        const cancionesFiltradas = playlist.canciones.filter(c => excluidas.indexOf(c.titulo) === -1);
+        const cancionesFiltradas = playlist.canciones.filter(c => !excluidas.includes(c.titulo));
         const plRoot = document.getElementById('playlist');
         function findItem(titulo) {
             if (!plRoot) return null;
             const n = String(titulo || '').toLowerCase().trim();
             if (!n) return null;
-            const items = plRoot.querySelectorAll('.playlist-item');
-            for (let i = 0; i < items.length; i++) {
-                const it = items[i];
-                const titleEl = it.querySelector('.item-title');
-                const t = (titleEl ? titleEl.textContent : '').trim().toLowerCase();
+            for (const it of plRoot.querySelectorAll('.playlist-item')) {
+                const t = (it.querySelector('.item-title')?.textContent || '').trim().toLowerCase();
                 if (t === n) return it;
             }
             return null;
         }
         const cancionesSync = cancionesFiltradas.map(c => {
             const it = findItem(c.titulo);
-            let portadaItem = '';
-            if (it) {
-                const img = it.querySelector('.thumbnail img');
-                if (img) portadaItem = img.src || '';
-            }
-            let subt = '';
-            if (it) {
-                const subEl = it.querySelector('.item-subtitle');
-                if (subEl) subt = subEl.textContent.trim();
-            }
             return {
                 titulo: c.titulo,
-                portada: portadaItem || c.portada || '',
-                subtitulo: subt || c.subtitulo || ''
+                portada: (it && it.querySelector('.thumbnail img')?.src) || c.portada || '',
+                subtitulo: (it && it.querySelector('.item-subtitle')?.textContent.trim()) || c.subtitulo || ''
             };
         });
         let portada = '';
-        for (let i = 0; i < cancionesSync.length; i++) {
-            if (cancionesSync[i].portada) { portada = cancionesSync[i].portada; break; }
-        }
+        for (const c of cancionesSync) { if (c.portada) { portada = c.portada; break; } }
         const snap = await db.collection('playlists_compartidas')
             .where('de', '==', user.uid)
             .where('playlistId', '==', playlist.id)
             .get();
         if (!snap.empty) {
-            await Promise.all(snap.docs.map(d => d.ref.update({ canciones: cancionesSync, portada: portada })));
+            await Promise.all(snap.docs.map(d => d.ref.update({ canciones: cancionesSync, portada })));
         }
     } catch (e) { console.warn('Error sincronizando compartidas:', e); }
 };
@@ -568,26 +480,18 @@ function pintarReproducciones(item, count) {
 }
 
 window.__artistFilter = null;
-window.__artistFilterTitles = [];   // ← NUEVO: guarda títulos para sobrevivir a re-renderizados
 window.__artistFilterName = '';
-window.__sequentialMode = false;    // ← NUEVO: fuerza orden secuencial
 
 function clearArtistFilter() {
     window.__artistFilter = null;
-    window.__artistFilterTitles = [];
     window.__artistFilterName = '';
-    window.__sequentialMode = false;
     document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: false } }));
 }
 
 function setArtistFilter(items, name) {
     if (!items || !items.length) return;
     window.__artistFilter = items.slice();
-    window.__artistFilterTitles = items
-        .map(i => i.querySelector('.item-title')?.textContent.trim() || '')
-        .filter(Boolean);
     window.__artistFilterName = name || '';
-    window.__sequentialMode = true;
     document.dispatchEvent(new CustomEvent('omega:artistmode', { detail: { active: true, name: name || '' } }));
 }
 
@@ -716,30 +620,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (img && img.getAttribute('src')) return img.src;
         return item.dataset.cover || '';
     }
-
-    /* ────────────────────────────────────────────────────────
-       getCandidateItems: filtro ESTRICTO (sin fallback a "all")
-       para no mezclar canciones entre playlists/álbumes/artistas
-       ──────────────────────────────────────────────────────── */
     function getCandidateItems() {
         const all = getAllItems();
-        let candidates = all;
-
-        // Filtro ESTRICTO por títulos (sobrevive a re-renderizados del DOM)
-        if (window.__artistFilterTitles && window.__artistFilterTitles.length > 0) {
-            const titleSet = new Set(window.__artistFilterTitles);
-            candidates = all.filter(i => titleSet.has(getItemTitle(i)));
-            // ⚠️ SIN fallback a "all": si no hay coincidencias, devuelve []
-        } else if (window.__artistFilter && window.__artistFilter.length) {
-            candidates = all.filter(i => window.__artistFilter.includes(i));
+        if (window.__artistFilter && window.__artistFilter.length) {
+            const filtered = all.filter(i => window.__artistFilter.includes(i));
+            if (filtered.length) return filtered;
         }
-
-        if (!hayConexion()) {
-            candidates = candidates.filter(i => esRecursoLocal(i));
-        }
-        return candidates;
+        return all;
     }
-
     function loadItem(item, autoplay = true) {
         if (!item) return;
         const src = item.dataset.src;
@@ -787,34 +675,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function playRandomItem() {
         const items = getCandidateItems();
-        if (!items.length) return;   // ← Playlist agotada o sin coincidencias: no reproducir nada
-
-        if (window.__sequentialMode === true || !isShuffleOn()) {
+        if (!items.length) return;
+        if (!isShuffleOn()) {
             let startIdx = 0;
             if (currentItem) {
-                let idx = items.indexOf(currentItem);
-                if (idx === -1) {
-                    const curTitle = getItemTitle(currentItem);
-                    if (curTitle) idx = items.findIndex(i => getItemTitle(i) === curTitle);
-                }
-                if (idx !== -1) {
-                    const nextIdx = idx + 1;
-                    if (nextIdx >= items.length) {
-                        if (window.__sequentialMode === true) {
-                            updateIcon(false);
-                            updateProgress(0);
-                            return;   // ← Fin de la playlist: se detiene
-                        }
-                        startIdx = 0;
-                    } else {
-                        startIdx = nextIdx;
-                    }
-                }
+                const idx = items.indexOf(currentItem);
+                if (idx !== -1) startIdx = (idx + 1) % items.length;
             }
             loadItem(items[startIdx], true);
             return;
         }
-
         let candidates = items;
         if (items.length > 1 && currentItem && items.includes(currentItem)) {
             candidates = items.filter(i => i !== currentItem);
@@ -823,53 +693,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const randomItem = candidates[Math.floor(Math.random() * candidates.length)];
         loadItem(randomItem, true);
     }
-
     function goNextItem() {
         const items = getCandidateItems();
         if (!items.length) return;
-
-        if (window.__sequentialMode === true || !isShuffleOn()) {
-            let idx = items.indexOf(currentItem);
-            if (idx === -1) {
-                const curTitle = getItemTitle(currentItem);
-                if (curTitle) idx = items.findIndex(i => getItemTitle(i) === curTitle);
-            }
-            if (idx === -1) idx = 0;
-            const nextIdx = idx + 1;
-            if (nextIdx >= items.length) {
-                if (window.__sequentialMode === true) return;   // ← Fin: no da la vuelta
-                loadItem(items[0], true);
-                return;
-            }
-            loadItem(items[nextIdx], true);
-            return;
-        }
-        playRandomItem();
+        if (isShuffleOn()) { playRandomItem(); return; }
+        let idx = items.indexOf(currentItem);
+        if (idx === -1) idx = 0;
+        loadItem(items[(idx + 1) % items.length], true);
     }
-
     function goPrevItem() {
         const items = getCandidateItems();
         if (!items.length) return;
-
-        if (window.__sequentialMode === true || !isShuffleOn()) {
-            let idx = items.indexOf(currentItem);
-            if (idx === -1) {
-                const curTitle = getItemTitle(currentItem);
-                if (curTitle) idx = items.findIndex(i => getItemTitle(i) === curTitle);
-            }
-            if (idx === -1) idx = 0;
-            const prevIdx = idx - 1;
-            if (prevIdx < 0) {
-                if (window.__sequentialMode === true) return;   // ← Inicio: no da la vuelta
-                loadItem(items[items.length - 1], true);
-                return;
-            }
-            loadItem(items[prevIdx], true);
-            return;
-        }
-        playRandomItem();
+        if (isShuffleOn()) { playRandomItem(); return; }
+        let idx = items.indexOf(currentItem);
+        if (idx === -1) idx = 0;
+        loadItem(items[(idx - 1 + items.length) % items.length], true);
     }
-
     document.addEventListener('omega:next', () => goNextItem());
     document.addEventListener('omega:prev', () => goPrevItem());
 
@@ -905,15 +744,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const completed = !!duration && isFinite(duration) && played >= (duration - 1.5);
         updateIcon(false); updateProgress(0);
         if (currentTimeEl) currentTimeEl.textContent = '0:00';
-        if (completed && currentItem && hayConexion()) {
+        if (completed && currentItem) {
             const titulo = getItemTitle(currentItem);
             const user = firebase.auth().currentUser;
-            if (titulo && user && esNuevoOyente(titulo, user.uid)) {
-                registrarOyente(titulo).catch(() => {});
-            }
-            if (titulo && user && typeof window.__guardarEnPlaylist === 'function') {
-                window.__guardarEnPlaylist(titulo).catch(() => {});
-            }
+            if (titulo && user && esNuevoOyente(titulo, user.uid)) await registrarOyente(titulo);
+            if (titulo && user && typeof window.__guardarEnPlaylist === 'function') await window.__guardarEnPlaylist(titulo);
         }
         playRandomItem();
     });
@@ -929,12 +764,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const item = e.target.closest('.playlist-item');
         if (!item) return;
         if (window.__artistFilter && window.__artistFilter.length) {
-            const itemTitle = getItemTitle(item);
-            let inFilter = window.__artistFilter.includes(item);
-            if (!inFilter && itemTitle && window.__artistFilterTitles && window.__artistFilterTitles.length) {
-                inFilter = window.__artistFilterTitles.includes(itemTitle);
-            }
-            if (!inFilter) clearArtistFilter();
+            if (!window.__artistFilter.includes(item)) clearArtistFilter();
         }
         loadItem(item, true);
     });
@@ -1627,12 +1457,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const list = getArtistItems(artistName);
             if (!list.length) return null;
             if (typeof setArtistFilter === 'function') setArtistFilter(list, artistName);
-            else {
-                window.__artistFilter = list.slice();
-                window.__artistFilterTitles = list.map(i => i.querySelector('.item-title')?.textContent.trim() || '').filter(Boolean);
-                window.__artistFilterName = artistName;
-                window.__sequentialMode = true;
-            }
+            else { window.__artistFilter = list.slice(); window.__artistFilterName = artistName; }
             return list;
         }
         function renderProfile(artistName) {
@@ -1680,7 +1505,7 @@ document.addEventListener('DOMContentLoaded', () => {
             apListen.onclick = () => {
                 const list = activateArtistMode(artistName);
                 if (!list || !list.length) return;
-                list[0].click();
+                list[Math.floor(Math.random() * list.length)].click();
                 setTimeout(updatePlayingCard, 60);
             };
             if (refreshTimer) clearInterval(refreshTimer);
@@ -2854,7 +2679,7 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   18. VISTA DE "VOLVER A OÍR"
+   18. VISTA DE "VOLVER A OÍR" (detalle + escuchar + EDITAR)
    ============================================================ */
 (function () {
     'use strict';
@@ -3092,12 +2917,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const items = currentPlaylist.canciones.map(c => findItemByTitle(c.titulo)).filter(Boolean);
                 if (!items.length) return;
                 if (typeof setArtistFilter === 'function') setArtistFilter(items, currentPlaylist.nombre);
-                else {
-                    window.__artistFilter = items.slice();
-                    window.__artistFilterTitles = items.map(i => i.querySelector('.item-title')?.textContent.trim() || '').filter(Boolean);
-                    window.__artistFilterName = currentPlaylist.nombre;
-                    window.__sequentialMode = true;
-                }
+                else { window.__artistFilter = items.slice(); window.__artistFilterName = currentPlaylist.nombre; }
                 items[0].click();
                 setTimeout(refreshPlayingRows, 60);
             });
@@ -3296,27 +3116,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!user) throw new Error('Debes iniciar sesión.');
         if (!playlist || !Array.isArray(playlist.canciones) || !playlist.canciones.length) throw new Error('La playlist está vacía.');
         if (user.uid === targetUid) throw new Error('No puedes compartir contigo mismo.');
-
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'compartir',
-                data: {
-                    playlist: {
-                        id: playlist.id || '',
-                        nombre: playlist.nombre || 'Playlist',
-                        canciones: playlist.canciones.map(c => ({
-                            titulo: c.titulo,
-                            portada: c.portada || '',
-                            subtitulo: c.subtitulo || ''
-                        }))
-                    },
-                    targetUser: { uid: targetUid, nombre: targetName || '', email: targetEmail || '', foto: targetFoto || '' }
-                }
-            });
-            yaCompartidosCache.add(targetUid);
-            return true;
-        }
-
         const canciones = playlist.canciones.map(c => {
             const it = findLocalItemByTitle(c.titulo);
             return { titulo: c.titulo, portada: getCoverFromItem(it) || c.portada || '', subtitulo: getSubtitleFromItem(it) || c.subtitulo || '' };
@@ -3452,14 +3251,7 @@ document.addEventListener('DOMContentLoaded', () => {
             status.textContent = 'Dejando de compartir con ' + u.nombre + '…';
             status.classList.remove('ok');
             try {
-                if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-                    await window.OmegaQueue.enqueue({
-                        tipo: 'dejar_compartir',
-                        data: { playlist: { id: currentPlaylistToShare.id || '', nombre: currentPlaylistToShare.nombre || '' }, targetUid: u.uid }
-                    });
-                } else {
-                    await dejarDeCompartirPlaylist(currentPlaylistToShare, u.uid);
-                }
+                await dejarDeCompartirPlaylist(currentPlaylistToShare, u.uid);
                 status.textContent = '✓ Dejaste de compartir con ' + u.nombre;
                 status.classList.add('ok');
                 const results = $('share-modal-results');
@@ -3734,7 +3526,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .collection(COLLECTION)
             .where('uid', '==', user.uid)
             .onSnapshot(snap => {
-                miPlaylistsCache = snap.docs.map(d => Object.assign({ id: d.id }, d.data()));
+                miPlaylistsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 miPlaylistsCache.sort((a, b) => {
                     const fa = a.fecha && typeof a.fecha.seconds === 'number' ? a.fecha.seconds : 0;
                     const fb = b.fecha && typeof b.fecha.seconds === 'number' ? b.fecha.seconds : 0;
@@ -3789,54 +3581,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const confirmBtn = $('mp-create-confirm');
         const privCheck = $('mp-create-private');
 
-        const nombre = (input ? input.value : '').trim();
+        const nombre = (input?.value || '').trim();
         if (!nombre) {
             if (status) { status.textContent = 'Escribe un nombre'; status.classList.remove('ok'); }
             return;
         }
         if (confirmBtn) confirmBtn.disabled = true;
-
-        const esPrivada = !!(privCheck && privCheck.checked);
-
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'crear_playlist',
-                data: { nombre: nombre, privada: esPrivada }
-            });
-            if (status) {
-                status.textContent = '✓ Guardada (se creará al volver internet)';
-                status.classList.add('ok');
-            }
-            if (confirmBtn) confirmBtn.disabled = false;
-            setTimeout(closeCreateModal, 900);
-            return;
-        }
-
         if (status) { status.textContent = 'Creando...'; status.classList.remove('ok'); }
         try {
             await firebase.firestore().collection(COLLECTION).add({
                 uid: user.uid,
-                nombre: nombre,
-                privada: esPrivada,
+                nombre,
+                privada: !!(privCheck && privCheck.checked),
                 canciones: [],
                 fecha: firebase.firestore.FieldValue.serverTimestamp()
             });
             if (status) { status.textContent = '✓ Playlist creada'; status.classList.add('ok'); }
             setTimeout(closeCreateModal, 500);
         } catch (e) {
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'crear_playlist',
-                    data: { nombre: nombre, privada: esPrivada }
-                });
-                if (status) {
-                    status.textContent = '✓ Guardada (se creará al volver internet)';
-                    status.classList.add('ok');
-                }
-                setTimeout(closeCreateModal, 900);
-            } else {
-                if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
-            }
+            if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
         } finally {
             if (confirmBtn) confirmBtn.disabled = false;
         }
@@ -3912,42 +3675,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(closeAddModal, 1100);
                 return;
             }
-            const nuevaCancion = {
+            canciones.push({
                 titulo: currentSongToAdd.titulo,
                 portada: currentSongToAdd.portada || '',
                 subtitulo: currentSongToAdd.subtitulo || ''
-            };
-
-            if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'anadir_cancion',
-                    data: { playlistId: pl.id, cancion: nuevaCancion }
-                });
-                if (status) { status.textContent = '✓ Añadida a ' + pl.nombre + ' (pendiente)'; status.classList.add('ok'); }
-                setTimeout(closeAddModal, 1000);
-                return;
-            }
-
-            canciones.push(nuevaCancion);
-            await firebase.firestore().collection(COLLECTION).doc(pl.id).update({ canciones: canciones });
+            });
+            await firebase.firestore().collection(COLLECTION).doc(pl.id).update({ canciones });
             if (status) { status.textContent = '✓ Añadida a ' + pl.nombre; status.classList.add('ok'); }
             setTimeout(closeAddModal, 1000);
         } catch (e) {
-            if (window.OmegaQueue) {
-                const nuevaCancion = {
-                    titulo: currentSongToAdd.titulo,
-                    portada: currentSongToAdd.portada || '',
-                    subtitulo: currentSongToAdd.subtitulo || ''
-                };
-                await window.OmegaQueue.enqueue({
-                    tipo: 'anadir_cancion',
-                    data: { playlistId: pl.id, cancion: nuevaCancion }
-                });
-                if (status) { status.textContent = '✓ Añadida a ' + pl.nombre + ' (pendiente)'; status.classList.add('ok'); }
-                setTimeout(closeAddModal, 1000);
-            } else {
-                if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
-            }
+            if (status) { status.textContent = 'Error: ' + (e.message || 'intenta de nuevo'); status.classList.remove('ok'); }
         }
     }
 
@@ -3964,24 +3701,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function togglePlaylistVisibility(plId, nuevoPrivada) {
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'visibilidad',
-                data: { playlistId: plId, privada: !!nuevoPrivada }
-            });
-            return;
-        }
         try {
             await firebase.firestore().collection(COLLECTION).doc(plId).update({ privada: !!nuevoPrivada });
-        } catch (e) {
-            console.warn('Error actualizando visibilidad:', e);
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'visibilidad',
-                    data: { playlistId: plId, privada: !!nuevoPrivada }
-                });
-            }
-        }
+        } catch (e) { console.warn('Error actualizando visibilidad:', e); }
     }
 
     function injectShareVisibilityToggle() {
@@ -4358,8 +4080,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderPublicPlaylists(playlists) {
         const els = ensurePublicSection();
         if (!els) return;
-        const sec = els.sec;
-        const carousel = els.carousel;
+        const { sec, carousel } = els;
         carousel.innerHTML = '';
 
         if (!playlists.length) {
@@ -4756,23 +4477,21 @@ document.addEventListener('DOMContentLoaded', () => {
     async function ensureConversation(convId, otherUser) {
         const ref = firebase.firestore().collection('conversaciones').doc(convId);
         const snap = await ref.get();
-        const info = {};
-        info[currentUser.uid] = {
-            nombre: currentUser.displayName || currentUser.email || 'Usuario',
-            foto: currentUser.photoURL || ''
-        };
-        info[otherUser.uid] = {
-            nombre: otherUser.nombre || 'Usuario',
-            foto: otherUser.foto || ''
+        const info = {
+            [currentUser.uid]: {
+                nombre: currentUser.displayName || currentUser.email || 'Usuario',
+                foto: currentUser.photoURL || ''
+            },
+            [otherUser.uid]: {
+                nombre: otherUser.nombre || 'Usuario',
+                foto: otherUser.foto || ''
+            }
         };
         if (!snap.exists) {
-            const noLeidos = {};
-            noLeidos[currentUser.uid] = 0;
-            noLeidos[otherUser.uid] = 0;
             await ref.set({
                 participantes: [currentUser.uid, otherUser.uid].sort(),
-                info: info,
-                noLeidos: noLeidos,
+                info,
+                noLeidos: { [currentUser.uid]: 0, [otherUser.uid]: 0 },
                 ultimoMensaje: null,
                 actualizado: firebase.firestore.FieldValue.serverTimestamp()
             });
@@ -4793,9 +4512,9 @@ document.addEventListener('DOMContentLoaded', () => {
     async function markConversationRead(convId) {
         if (!currentUser) return;
         try {
-            const upd = {};
-            upd['noLeidos.' + currentUser.uid] = 0;
-            await firebase.firestore().collection('conversaciones').doc(convId).update(upd);
+            await firebase.firestore().collection('conversaciones').doc(convId).update({
+                ['noLeidos.' + currentUser.uid]: 0
+            });
         } catch (e) {}
     }
 
@@ -4906,60 +4625,36 @@ document.addEventListener('DOMContentLoaded', () => {
         currentAttachment = null;
         renderAttachment();
 
+        try { await ensureConversation(convId, currentChat); } catch (e) {}
+
         const payload = {
+            de: currentUser.uid,
             texto: texto,
             cancion: cancion ? {
                 titulo: cancion.titulo,
                 artista: cancion.artista || '',
                 portada: cancion.portada || '',
                 audioUrl: cancion.audioUrl || ''
-            } : null
+            } : null,
+            fecha: firebase.firestore.FieldValue.serverTimestamp(),
+            leido: false
         };
 
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'mensaje',
-                data: { convId: convId, otherUser: currentChat, payload: payload }
-            });
-            return;
-        }
-
         try {
-            await ensureConversation(convId, currentChat);
             const convRef = firebase.firestore().collection('conversaciones').doc(convId);
-            await convRef.collection('mensajes').add({
-                de: currentUser.uid,
-                texto: payload.texto,
-                cancion: payload.cancion,
-                fecha: firebase.firestore.FieldValue.serverTimestamp(),
-                leido: false,
-                visto: false
-            });
-            const convSnap = await convRef.get();
-            const convData = convSnap.data() || {};
-            const noLeidos = convData.noLeidos || {};
-            noLeidos[currentChat.uid] = (noLeidos[currentChat.uid] || 0) + 1;
-            noLeidos[currentUser.uid] = 0;
-            const textoUltimo = payload.texto || (payload.cancion ? '🎵 ' + (payload.cancion.titulo || 'Canción') : '');
+            await convRef.collection('mensajes').add(payload);
             await convRef.update({
                 ultimoMensaje: {
-                    texto: textoUltimo,
+                    texto: texto || (cancion ? '🎵 ' + (cancion.titulo || 'Canción') : ''),
                     de: currentUser.uid,
                     fecha: firebase.firestore.FieldValue.serverTimestamp(),
-                    tieneCancion: !!payload.cancion
+                    tieneCancion: !!cancion
                 },
-                noLeidos: noLeidos,
+                ['noLeidos.' + currentChat.uid]: firebase.firestore.FieldValue.increment(1),
+                ['noLeidos.' + currentUser.uid]: 0,
                 actualizado: firebase.firestore.FieldValue.serverTimestamp()
             });
-        } catch (e) {
-            console.warn('Error enviando mensaje, encolando:', e);
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'mensaje',
-                    data: { convId: convId, otherUser: currentChat, payload: payload }
-                });
-            }
-        }
+        } catch (e) { console.warn('Error enviando mensaje:', e); }
     }
 
     function renderAttachment() {
@@ -5504,9 +5199,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const name = (info.nombre || '').trim().toLowerCase();
                 const noLeidos = (d.noLeidos && d.noLeidos[currentUid]) || 0;
                 if (name === activeName && noLeidos > 0) {
-                    const upd = {};
-                    upd['noLeidos.' + currentUid] = 0;
-                    tasks.push(doc.ref.update(upd).catch(() => {}));
+                    tasks.push(
+                        doc.ref.update({ ['noLeidos.' + currentUid]: 0 })
+                            .catch(() => {})
+                    );
                 }
             });
 
@@ -5628,6 +5324,7 @@ document.addEventListener('DOMContentLoaded', () => {
             backdrop-filter: blur(3px);
         }
         .conv-menu-backdrop.visible { opacity: 1; visibility: visible; }
+
         .conv-menu {
             width: 100%; max-width: 340px;
             background: #141414;
@@ -5638,6 +5335,7 @@ document.addEventListener('DOMContentLoaded', () => {
             transition: transform 0.25s cubic-bezier(0.22,1,0.36,1);
         }
         .conv-menu-backdrop.visible .conv-menu { transform: scale(1); }
+
         .conv-menu-title {
             padding: 16px 18px 10px;
             font-size: 12.5px; font-weight: 800;
@@ -5672,7 +5370,8 @@ document.addEventListener('DOMContentLoaded', () => {
             cursor: pointer;
         }
         .conv-menu-cancel:active { background: #262626; }
-        .msg-row.selecting { padding-left: 52px !important; position: relative; }
+
+        .msg-row.selecting { padding-left: 52px !important; }
         .msg-row .msg-row-select {
             position: absolute; left: 14px; top: 50%;
             transform: translateY(-50%);
@@ -5697,6 +5396,7 @@ document.addEventListener('DOMContentLoaded', () => {
             transform: rotate(-45deg) translate(1px, -1px);
         }
         .msg-row.selecting { cursor: pointer; }
+
         .conv-clean-bar {
             position: absolute;
             left: 0; right: 0; bottom: 0;
@@ -5711,9 +5411,11 @@ document.addEventListener('DOMContentLoaded', () => {
             box-shadow: 0 -8px 26px rgba(0,0,0,0.7);
         }
         .conv-clean-bar.visible { transform: translateY(0); }
+
         .conv-clean-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
         .conv-clean-count { font-size: 14px; font-weight: 800; color: #ffffff; }
         .conv-clean-hint  { font-size: 11.5px; color: #999999; }
+
         .conv-clean-btn {
             flex-shrink: 0;
             border: none; border-radius: 50px;
@@ -5727,6 +5429,7 @@ document.addEventListener('DOMContentLoaded', () => {
         .conv-clean-btn.confirm { background: #ff2a2a; color: #ffffff; box-shadow: 0 6px 18px rgba(255,42,42,0.35); }
         .conv-clean-btn.confirm:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
         .conv-clean-btn:active:not(:disabled) { transform: scale(0.95); }
+
         .conv-confirm-box {
             width: 100%; max-width: 340px;
             background: #141414;
@@ -6201,12 +5904,6 @@ document.addEventListener('DOMContentLoaded', () => {
             window.__pendingFCMToken = token;
             return;
         }
-
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({ tipo: 'fcm_token', data: { token: token } });
-            return;
-        }
-
         try {
             await firebase.firestore()
                 .collection('historial_usuarios')
@@ -6215,9 +5912,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('✅ Token FCM guardado');
         } catch (e) {
             console.warn('⚠️ No se pudo guardar token FCM:', e);
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({ tipo: 'fcm_token', data: { token: token } });
-            }
         }
     };
 
@@ -6342,13 +6036,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateStatus('Comprobando disponibilidad…', 'checking');
         setSaveEnabled(false);
-
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            updateStatus('✅ Se verificará al volver internet.', 'ok');
-            setSaveEnabled(true);
-            return;
-        }
-
         try {
             const available = await isNameAvailable(trimmed);
             if (token !== checkToken) return;
@@ -6360,8 +6047,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 setSaveEnabled(true);
             }
         } catch (e) {
-            updateStatus('✅ Se verificará al volver internet.', 'ok');
-            setSaveEnabled(true);
+            updateStatus('Error al verificar. Intenta de nuevo.', 'error');
+            setSaveEnabled(false);
         }
     }
 
@@ -6409,25 +6096,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         const newName = validation.value;
-        const nombreLower = normalizeName(newName);
 
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Guardando…'; }
         updateStatus('Guardando…', 'checking');
 
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'editar_nombre',
-                data: { nombre: newName, nombre_lower: nombreLower }
-            });
-            try { await user.updateProfile({ displayName: newName }); } catch (e) {}
-            applyNewNameEverywhere(newName);
-            updateStatus('✅ Guardado (se sincronizará al volver internet)', 'ok');
-            setTimeout(closeModal, 1200);
-            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; }
-            return;
-        }
-
         try {
+            const nombreLower = normalizeName(newName);
+
             const available = await isNameAvailable(newName);
             if (!available) {
                 updateStatus('❌ Ese nombre no está disponible.', 'error');
@@ -6451,9 +6126,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     .get();
                 const tasks = [];
                 convSnap.forEach(doc => {
-                    const upd = {};
-                    upd['info.' + user.uid + '.nombre'] = newName;
-                    tasks.push(doc.ref.update(upd).catch(() => {}));
+                    tasks.push(
+                        doc.ref.update({ ['info.' + user.uid + '.nombre']: newName })
+                            .catch(() => {})
+                    );
                 });
                 if (tasks.length) await Promise.all(tasks);
             } catch (e) { console.warn('Error actualizando conversaciones:', e); }
@@ -6469,17 +6145,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (e) {
             console.error('Error guardando nombre:', e);
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'editar_nombre',
-                    data: { nombre: newName, nombre_lower: nombreLower }
-                });
-                applyNewNameEverywhere(newName);
-                updateStatus('✅ Guardado (se sincronizará al volver internet)', 'ok');
-                setTimeout(closeModal, 1200);
-            } else {
-                updateStatus('Error al guardar. Intenta de nuevo.', 'error');
-            }
+            updateStatus('Error al guardar. Intenta de nuevo.', 'error');
         } finally {
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; }
         }
@@ -6488,8 +6154,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyNewNameEverywhere(newName) {
         const sideEl = $('submenu-user-name');
         if (sideEl) sideEl.textContent = newName;
+
         const modalInput = $('name-modal-input');
         if (modalInput) modalInput.value = newName;
+
         currentName = newName;
     }
 
@@ -7131,29 +6799,6 @@ document.addEventListener('DOMContentLoaded', () => {
     async function guardarPrivacidad(esPrivado) {
         const user = firebase.auth().currentUser;
         if (!user) return;
-
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'privacidad_email',
-                data: { privado: !!esPrivado }
-            });
-            const status = $('name-modal-status');
-            if (status) {
-                status.textContent = esPrivado
-                    ? '🔒 Guardado: correo privado (pendiente)'
-                    : '🌐 Guardado: correo público (pendiente)';
-                status.classList.remove('error');
-                status.classList.add('ok');
-                setTimeout(() => {
-                    if (status.textContent.includes('Guardado:')) {
-                        status.textContent = '';
-                        status.classList.remove('ok');
-                    }
-                }, 1800);
-            }
-            return;
-        }
-
         try {
             await firebase.firestore()
                 .collection('historial_usuarios').doc(user.uid)
@@ -7178,11 +6823,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) {
             console.warn('[PRIVACIDAD] Error guardando:', e);
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'privacidad_email',
-                    data: { privado: !!esPrivado }
-                });
+            const status = $('name-modal-status');
+            if (status) {
+                status.textContent = 'No se pudo guardar la privacidad.';
+                status.classList.remove('ok');
+                status.classList.add('error');
             }
         }
     }
@@ -7952,14 +7597,6 @@ document.addEventListener('DOMContentLoaded', () => {
     async function deletePlaylistFromFirestore(pl) {
         if (!pl || !pl.id) throw new Error('Playlist sin id');
 
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'eliminar_playlist',
-                data: { playlistId: pl.id }
-            });
-            return;
-        }
-
         try {
             await firebase.firestore().collection('mis_playlists').doc(pl.id).delete();
         } catch (e) { console.warn('[DEL] mis_playlists:', e); }
@@ -8533,6 +8170,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    38. DESCARGAS OFFLINE CON INDEXEDDB + ESTADO DEL BOTÓN #fs-like
+   (VERSIÓN MEJORADA - INDICADOR CLARO)
    ============================================================ */
 (function () {
     'use strict';
@@ -9069,16 +8707,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    39. ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA
+   - Rastrea el tiempo real con la música reproduciéndose.
+   - Deja de contar tras 5 min sin interacción.
+   - Guarda en historial_usuarios → campo "tiempo_escucha":
+        { "2026-10": <segundos>, "2026-09": <segundos>, ... }
+   - NO modifica el historial de canciones ni ninguna otra cosa.
    ============================================================ */
 (function () {
     'use strict';
 
     const $ = (id) => document.getElementById(id);
 
-    const INACTIVITY_MS     = 5 * 60 * 1000;
-    const TICK_MS           = 10000;
-    const SAVE_INTERVAL_MS  = 30000;
-    const MAX_TICK_DT_S     = 60;
+    const INACTIVITY_MS     = 5 * 60 * 1000;  // 5 min sin interacción → pausa
+    const TICK_MS           = 10000;          // chequeo cada 10 s
+    const SAVE_INTERVAL_MS  = 30000;          // guardar en Firestore cada 30 s
+    const MAX_TICK_DT_S     = 60;             // descarta ticks anómalos (> 1 min)
 
     const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                       'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -9095,6 +8738,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let mesesCache      = {};
     let _dirty          = false;
 
+    /* ---------- Utilidades ---------- */
     function monthKey(d) {
         const date = d || new Date();
         const y = date.getFullYear();
@@ -9118,6 +8762,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return h + ' h ' + m + ' min';
     }
 
+    /* ---------- Interacción del usuario ---------- */
     function markInteraction() { lastInteraction = Date.now(); }
 
     function attachInteractionListeners() {
@@ -9127,6 +8772,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
     }
 
+    /* ---------- Firestore ---------- */
     async function loadMeses() {
         if (!currentUser) { mesesCache = {}; return; }
         try {
@@ -9158,31 +8804,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!_dirty) return;
 
-        if (window.OmegaQueue && !window.OmegaQueue.hayConexion()) {
-            await window.OmegaQueue.enqueue({
-                tipo: 'tiempo_escucha',
-                data: { meses: mesesCache }
-            });
-            _dirty = false;
-            return;
-        }
-
         try {
             const ref = firebase.firestore().collection('historial_usuarios').doc(currentUser.uid);
             await ref.set({ tiempo_escucha: mesesCache }, { merge: true });
             _dirty = false;
         } catch (e) {
             console.warn('[STATS] No se pudo guardar tiempo_escucha:', e);
-            if (window.OmegaQueue) {
-                await window.OmegaQueue.enqueue({
-                    tipo: 'tiempo_escucha',
-                    data: { meses: mesesCache }
-                });
-                _dirty = false;
-            }
         }
     }
 
+    /* ---------- Tick de acumulación ---------- */
     function tick() {
         const now = Date.now();
         const dt  = (now - lastTickTime) / 1000;
@@ -9208,6 +8839,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    /* ---------- Render ---------- */
     function renderStats() {
         const curKey  = monthKey();
         const curSecs = (mesesCache[curKey] || 0) + pendingSeconds;
@@ -9255,6 +8887,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ---------- Apertura / cierre de la vista ---------- */
     function closeOtherViews() {
         ['playlist-view','artist-profile','album-view','mi-playlist-view',
          'mensajes-view','chat-view','newmsg-view'].forEach(id => {
@@ -9303,6 +8936,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ---------- Init ---------- */
     function init() {
         if (typeof firebase === 'undefined' || !firebase.auth) {
             setTimeout(init, 300);
