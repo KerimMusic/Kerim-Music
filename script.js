@@ -2395,6 +2395,14 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
                 if (typeof firebase === 'undefined' || !firebase.auth) throw new Error('Firebase no disponible');
+
+                // ⬇️ Sincroniza las estadísticas pendientes ANTES de cerrar sesión.
+                // Si no se hace aquí, Firestore rechazará la escritura por reglas de seguridad.
+                if (typeof window.__sincronizarStatsAntesDeSalir === 'function') {
+                    try { await window.__sincronizarStatsAntesDeSalir(); }
+                    catch (e) { console.warn('[STATS] sync pre-logout falló:', e); }
+                }
+
                 await firebase.auth().signOut();
                 const submenu = document.getElementById('submenu');
                 const overlay = document.getElementById('submenu-overlay');
@@ -8705,48 +8713,45 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   39. ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA
+   39. ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA (optimizado)
+   ------------------------------------------------------------
+   - Play/Pausa → SOLO localStorage (0 lecturas / 0 escrituras)
+   - Ver estadísticas → 1 sola .get() sin onSnapshot
+   - Salir/app a fondo/logout → 1 sola escritura con increment()
    ============================================================ */
 (function () {
     'use strict';
 
     const $ = (id) => document.getElementById(id);
 
-    const INACTIVITY_MS     = 5 * 60 * 1000;
-    const TICK_MS           = 10000;
-    const SAVE_INTERVAL_MS  = 30000;
-    const MAX_TICK_DT_S     = 60;
+    const INACTIVITY_MS    = 5 * 60 * 1000;      // 5 min sin interactuar → no cuenta
+    const MAX_SESSION_SECS = 6 * 60 * 60;        // tope de seguridad por sesión
+
+    // localStorage
+    const LS_PENDIENTE = 'omega_stats_pendiente_v1'; // segundos sin sincronizar
+    const LS_INICIO    = 'omega_stats_inicio_v1';    // ms del inicio de la sesión actual
 
     const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                       'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-    let audioPlayer    = null;
-    let currentUser    = null;
-    let tickTimer      = null;
-
+    let audioPlayer     = null;
+    let currentUser     = null;
+    let mesesCache      = {};        // lo leído desde Firestore
     let lastInteraction = Date.now();
-    let lastTickTime    = Date.now();
-    let lastSaveTime    = Date.now();
+    let syncing         = false;
+    let _sessionStart   = 0;         // ms; 0 = sin sesión activa
 
-    let pendingSeconds  = 0;
-    let mesesCache      = {};
-    let _dirty          = false;
-
+    /* ---------- Utilidades ---------- */
     function monthKey(d) {
         const date = d || new Date();
-        const y = date.getFullYear();
-        const m = String(date.getMonth() + 1).padStart(2, '0');
-        return y + '-' + m;
+        return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
     }
-
     function monthLabel(key) {
         const parts = String(key || '').split('-');
-        const y = parts[0];
         const mi = parseInt(parts[1], 10) - 1;
         if (isNaN(mi) || mi < 0 || mi > 11) return key;
-        return MESES_ES[mi] + ' ' + y;
+        return MESES_ES[mi] + ' ' + parts[0];
     }
-
     function formatTime(seconds) {
         const s = Math.max(0, Math.floor(seconds || 0));
         const h = Math.floor(s / 3600);
@@ -8755,20 +8760,103 @@ document.addEventListener('DOMContentLoaded', () => {
         return h + ' h ' + m + ' min';
     }
 
-    function markInteraction() { lastInteraction = Date.now(); }
+    /* ---------- localStorage helpers ---------- */
+    function readPendiente() {
+        const v = parseFloat(localStorage.getItem(LS_PENDIENTE) || '0');
+        return isFinite(v) && v > 0 ? v : 0;
+    }
+    function writePendiente(secs) {
+        try {
+            if (secs > 0) localStorage.setItem(LS_PENDIENTE, String(secs));
+            else          localStorage.removeItem(LS_PENDIENTE);
+        } catch (_) {}
+    }
+    function readInicio() {
+        const v = parseInt(localStorage.getItem(LS_INICIO) || '0', 10);
+        return isFinite(v) && v > 0 ? v : 0;
+    }
+    function writeInicio(ms) {
+        try {
+            if (ms > 0) localStorage.setItem(LS_INICIO, String(ms));
+            else        localStorage.removeItem(LS_INICIO);
+        } catch (_) {}
+    }
 
+    function markInteraction() { lastInteraction = Date.now(); }
     function attachInteractionListeners() {
-        ['click', 'touchstart', 'pointerdown', 'keydown', 'scroll', 'wheel']
+        ['click','touchstart','pointerdown','keydown','scroll','wheel']
             .forEach(evt => document.addEventListener(evt, markInteraction, {
                 passive: true, capture: true
             }));
     }
 
-    async function loadMeses() {
-        if (!currentUser) { mesesCache = {}; return; }
+    /* ---------- Sesión de escucha (100% local) ---------- */
+    function startSession() {
+        if (_sessionStart > 0) return;
+        _sessionStart = Date.now();
+        writeInicio(_sessionStart);
+    }
+    function closeSession() {
+        const start = _sessionStart || readInicio();
+        _sessionStart = 0;
+        writeInicio(0);
+        if (!start) return;
+
+        const now = Date.now();
+        const elapsed = (now - start) / 1000;
+        if (!(elapsed > 0) || elapsed > MAX_SESSION_SECS) return;
+
+        // Solo cuenta si hubo actividad reciente o si el audio sigue sonando
+        const audioPlaying = audioPlayer && !audioPlayer.paused;
+        const dentro = audioPlaying || (now - lastInteraction) <= INACTIVITY_MS;
+        if (!dentro) return;
+
+        writePendiente(readPendiente() + elapsed);
+    }
+
+    /* ---------- Sincronización: 1 sola escritura, SIN leer antes ---------- */
+    async function sincronizarPendiente() {
+        const secs = readPendiente();
+        if (!currentUser || secs <= 0 || syncing) return;
+        syncing = true;
+        const key = monthKey();
         try {
-            const ref  = firebase.firestore().collection('historial_usuarios').doc(currentUser.uid);
-            const snap = await ref.get();
+            const ref = firebase.firestore()
+                .collection('historial_usuarios').doc(currentUser.uid);
+
+            // update con dot-path + increment → NO pisa otros meses y NO necesita .get()
+            try {
+                await ref.update({
+                    ['tiempo_escucha.' + key]:
+                        firebase.firestore.FieldValue.increment(secs)
+                });
+            } catch (e) {
+                const msg  = String((e && e.message) || '');
+                const code = (e && e.code) || '';
+                // Solo creamos el documento si realmente no existía
+                if (code === 'not-found' || /not.?found/i.test(msg)) {
+                    await ref.set({
+                        tiempo_escucha: { [key]: secs }
+                    }, { merge: true });
+                } else {
+                    throw e;
+                }
+            }
+            writePendiente(0);   // limpiar SOLO tras éxito
+        } catch (e) {
+            console.warn('[STATS] No se pudo sincronizar:', e);
+        } finally {
+            syncing = false;
+        }
+    }
+
+    /* ---------- Lectura: 1 sola .get(), sin onSnapshot ---------- */
+    async function cargarDesdeFirestore() {
+        if (!currentUser) { mesesCache = {}; renderStats(); return; }
+        try {
+            const ref = firebase.firestore()
+                .collection('historial_usuarios').doc(currentUser.uid);
+            const snap = await ref.get();   // ← una sola lectura
             if (snap.exists) {
                 const data = snap.data() || {};
                 mesesCache = (data.tiempo_escucha && typeof data.tiempo_escucha === 'object')
@@ -8778,60 +8866,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 mesesCache = {};
             }
         } catch (e) {
-            console.warn('[STATS] No se pudo leer tiempo_escucha:', e);
+            console.warn('[STATS] Error leyendo tiempo_escucha:', e);
             mesesCache = {};
         }
         renderStats();
     }
 
-    async function saveMeses() {
-        if (!currentUser) return;
-
-        if (pendingSeconds > 0) {
-            const key = monthKey();
-            mesesCache[key] = (mesesCache[key] || 0) + pendingSeconds;
-            pendingSeconds = 0;
-            _dirty = true;
-        }
-        if (!_dirty) return;
-
-        try {
-            const ref = firebase.firestore().collection('historial_usuarios').doc(currentUser.uid);
-            await ref.set({ tiempo_escucha: mesesCache }, { merge: true });
-            _dirty = false;
-        } catch (e) {
-            console.warn('[STATS] No se pudo guardar tiempo_escucha:', e);
-        }
-    }
-
-    function tick() {
-        const now = Date.now();
-        const dt  = (now - lastTickTime) / 1000;
-        lastTickTime = now;
-
-        if (!audioPlayer) return;
-        if (audioPlayer.paused) return;
-        if (!audioPlayer.currentTime || audioPlayer.currentTime <= 0) return;
-        if (audioPlayer.duration && audioPlayer.currentTime >= audioPlayer.duration - 0.5) return;
-
-        if (now - lastInteraction > INACTIVITY_MS) return;
-
-        if (dt > 0 && dt <= MAX_TICK_DT_S) {
-            pendingSeconds += dt;
-            _dirty = true;
-        }
-
-        if (now - lastSaveTime >= SAVE_INTERVAL_MS) {
-            lastSaveTime = now;
-            saveMeses().then(renderStats);
-        } else {
-            renderStats();
-        }
-    }
-
+    /* ---------- Render ---------- */
     function renderStats() {
-        const curKey  = monthKey();
-        const curSecs = (mesesCache[curKey] || 0) + pendingSeconds;
+        const curKey    = monthKey();
+        const pendiente = readPendiente();
+
+        // Añade en vivo lo que dura la sesión actual (si hay una abierta)
+        let enVivo = 0;
+        if (_sessionStart > 0) {
+            const el = (Date.now() - _sessionStart) / 1000;
+            if (el > 0 && el < MAX_SESSION_SECS) enVivo = el;
+        }
+
+        const curSecs = (Number(mesesCache[curKey]) || 0) + pendiente + enVivo;
 
         const heroMonth = $('st-hero-month');
         const heroTime  = $('st-hero-time');
@@ -8841,13 +8894,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const list  = $('st-list');
         const empty = $('st-empty');
         if (!list) return;
-
         list.innerHTML = '';
 
         const keys = Object.keys(mesesCache)
-            .filter(k => k !== curKey && (mesesCache[k] || 0) > 0)
-            .sort()
-            .reverse();
+            .filter(k => k !== curKey && (Number(mesesCache[k]) || 0) > 0)
+            .sort().reverse();
 
         if (!keys.length) {
             if (empty) empty.style.display = '';
@@ -8876,6 +8927,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ---------- Vistas ---------- */
     function closeOtherViews() {
         ['playlist-view','artist-profile','album-view','mi-playlist-view',
          'mensajes-view','chat-view','newmsg-view'].forEach(id => {
@@ -8886,8 +8938,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-
-    function openView() {
+    async function openView() {
         const view = $('stats-view');
         if (!view) return;
         closeOtherViews();
@@ -8895,20 +8946,17 @@ document.addEventListener('DOMContentLoaded', () => {
         view.setAttribute('aria-hidden', 'false');
         const scroll = $('st-scroll');
         if (scroll) scroll.scrollTop = 0;
-        renderStats();
+        await cargarDesdeFirestore();      // ← única lectura
     }
-
     function closeView() {
         const view = $('stats-view');
         if (!view) return;
         view.classList.remove('visible');
         view.setAttribute('aria-hidden', 'true');
     }
-
     function watchOtherViews() {
-        const ids = ['playlist-view','artist-profile','album-view','mi-playlist-view',
-                     'mensajes-view','chat-view','newmsg-view'];
-        ids.forEach(id => {
+        ['playlist-view','artist-profile','album-view','mi-playlist-view',
+         'mensajes-view','chat-view','newmsg-view'].forEach(id => {
             const el = $(id);
             if (!el || el.dataset.statsWatch === '1') return;
             el.dataset.statsWatch = '1';
@@ -8924,6 +8972,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ---------- Init ---------- */
     function init() {
         if (typeof firebase === 'undefined' || !firebase.auth) {
             setTimeout(init, 300);
@@ -8961,43 +9010,60 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }, true);
 
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') {
-                saveMeses();
-            } else {
-                lastTickTime = Date.now();
-            }
-        });
-        window.addEventListener('pagehide', () => { saveMeses(); });
-        window.addEventListener('beforeunload', () => { saveMeses(); });
+        /* === Play / Pausa / Cambio de pista → SOLO localStorage === */
+        if (audioPlayer && audioPlayer.dataset.statsHook !== '1') {
+            audioPlayer.dataset.statsHook = '1';
+
+            audioPlayer.addEventListener('play', () => {
+                markInteraction();
+                startSession();
+            });
+            audioPlayer.addEventListener('pause', closeSession);
+            audioPlayer.addEventListener('ended', closeSession);
+
+            // Red de seguridad: si está sonando y no hay sesión, la abrimos
+            audioPlayer.addEventListener('timeupdate', () => {
+                if (!audioPlayer.paused && _sessionStart === 0) startSession();
+            });
+        }
 
         attachInteractionListeners();
 
-        if (audioPlayer && audioPlayer.dataset.statsHook !== '1') {
-            audioPlayer.dataset.statsHook = '1';
-            ['play', 'pause', 'seeking', 'seeked', 'loadedmetadata'].forEach(evt => {
-                audioPlayer.addEventListener(evt, () => {
-                    markInteraction();
-                    lastTickTime = Date.now();
-                    if (evt === 'pause') saveMeses().then(renderStats);
-                });
-            });
-        }
+        /* === Sincronización al salir / fondo === */
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                closeSession();
+                sincronizarPendiente();
+            } else {
+                lastInteraction = Date.now();
+                if (audioPlayer && !audioPlayer.paused) startSession();
+            }
+        });
+        window.addEventListener('pagehide', () => {
+            closeSession();
+            sincronizarPendiente();
+        });
+        window.addEventListener('beforeunload', () => {
+            closeSession();
+            sincronizarPendiente();
+        });
+
+        /* === API para que el logout sincronice antes de cerrar sesión === */
+        window.__sincronizarStatsAntesDeSalir = async () => {
+            closeSession();
+            await sincronizarPendiente();
+        };
 
         firebase.auth().onAuthStateChanged(async (user) => {
             if (user) {
                 currentUser = user;
-                lastTickTime = Date.now();
-                lastSaveTime = Date.now();
-                await loadMeses();
-                if (!tickTimer) tickTimer = setInterval(tick, TICK_MS);
+                lastInteraction = Date.now();
+                // Recupera una sesión que haya quedado colgada
+                if (readInicio() > 0) closeSession();
+                await cargarDesdeFirestore();
             } else {
-                if (currentUser) await saveMeses();
-                currentUser   = null;
-                mesesCache    = {};
-                pendingSeconds = 0;
-                _dirty = false;
-                if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+                currentUser = null;
+                mesesCache  = {};
             }
         });
 
@@ -9886,6 +9952,7 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+
 /* ============================================================
    44. CAMBIAR COLOR — MODO BLANCO / NEGRO
    ============================================================ */
