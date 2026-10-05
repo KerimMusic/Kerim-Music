@@ -10062,3 +10062,984 @@ document.addEventListener('DOMContentLoaded', () => {
         init();
     }
 })();
+
+/* ============================================================
+   45. COMUNIDAD OMEGA
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+
+    const COL_POSTS = 'comunidad_publicaciones';
+    const SUB_COMENT = 'comentarios';
+
+    const MAIN_VIEWS = [
+        'playlist-view','artist-profile','album-view','mi-playlist-view',
+        'mensajes-view','chat-view','newmsg-view','stats-view'
+    ];
+    const COM_VIEWS = ['comunidad-view','comunidad-crear-view','comentarios-view'];
+
+    let currentUser      = null;
+    let unsubPosts       = null;
+    let unsubComments    = null;
+    let postsCache       = [];
+    let selectedSong     = null;
+    let activePostId     = null;
+    let activePostData   = null;
+    let editingPostId    = null;
+    let editingCommentId = null;
+    let menuBackdrop     = null;
+
+    /* ---------- Utilidades ---------- */
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+    function timeAgo(date) {
+        if (!date) return '';
+        const diff = (Date.now() - date.getTime()) / 1000;
+        if (diff < 60) return 'ahora';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+        if (diff < 604800) return Math.floor(diff / 86400) + 'd';
+        return date.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+    function avatarHTML(u) {
+        const name = (u && u.autorNombre) || 'U';
+        const initial = name.trim()[0] ? name.trim()[0].toUpperCase() : '?';
+        if (u && u.autorFoto) {
+            return '<img src="' + esc(u.autorFoto) + '" alt="" onerror="this.style.display=\'none\';this.parentNode.textContent=\'' + initial + '\';">';
+        }
+        return initial;
+    }
+    function closeAllViews() {
+        [...MAIN_VIEWS, ...COM_VIEWS].forEach(id => {
+            const v = $(id);
+            if (v && v.classList.contains('visible')) {
+                v.classList.remove('visible');
+                v.setAttribute('aria-hidden', 'true');
+            }
+        });
+    }
+    function openView(id) {
+        closeAllViews();
+        const v = $(id);
+        if (v) { v.classList.add('visible'); v.setAttribute('aria-hidden', 'false'); }
+    }
+    function closeView(id) {
+        const v = $(id);
+        if (v) { v.classList.remove('visible'); v.setAttribute('aria-hidden', 'true'); }
+    }
+
+    /* ---------- Menú contextual ---------- */
+    function closeMenu() {
+        if (menuBackdrop && menuBackdrop.parentNode) menuBackdrop.parentNode.removeChild(menuBackdrop);
+        menuBackdrop = null;
+    }
+    function showMenu(title, options) {
+        closeMenu();
+        menuBackdrop = document.createElement('div');
+        menuBackdrop.className = 'com-omega-menu-backdrop';
+        const menu = document.createElement('div');
+        menu.className = 'com-omega-menu';
+        menu.setAttribute('role', 'dialog');
+        menu.setAttribute('aria-modal', 'true');
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'com-omega-menu-title';
+        titleEl.textContent = title || '';
+        menu.appendChild(titleEl);
+
+        options.forEach(op => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'com-omega-menu-btn' + (op.danger ? ' danger' : '');
+            btn.innerHTML = op.icon + '<span>' + op.label + '</span>';
+            btn.addEventListener('click', () => {
+                closeMenu();
+                try { op.onClick(); } catch (e) { console.warn(e); }
+            });
+            menu.appendChild(btn);
+        });
+
+        menuBackdrop.appendChild(menu);
+        document.body.appendChild(menuBackdrop);
+        requestAnimationFrame(() => menuBackdrop.classList.add('visible'));
+
+        menuBackdrop.addEventListener('click', (e) => {
+            if (e.target === menuBackdrop) closeMenu();
+        });
+    }
+    function confirmDialog(title, message, onYes) {
+        closeMenu();
+        menuBackdrop = document.createElement('div');
+        menuBackdrop.className = 'com-omega-menu-backdrop';
+        const box = document.createElement('div');
+        box.className = 'com-omega-menu';
+        box.setAttribute('role', 'dialog');
+        box.setAttribute('aria-modal', 'true');
+        box.innerHTML =
+            '<div class="com-omega-menu-title">' + esc(title) + '</div>' +
+            '<div style="padding: 6px 18px 14px; color:#b3b3b3; font-size:13.5px; line-height:1.45; text-align:center;">'
+                + esc(message) + '</div>' +
+            '<div style="display:flex; gap:10px; padding:0 14px 14px;">' +
+                '<button type="button" class="com-omega-menu-btn" data-action="no" style="border-radius:50px; justify-content:center; border:1px solid #2a2a2a; background:#262626; padding:12px 16px;">Cancelar</button>' +
+                '<button type="button" class="com-omega-menu-btn danger" data-action="yes" style="border-radius:50px; justify-content:center; background:#ff2a2a; color:#fff; padding:12px 16px;">Eliminar</button>' +
+            '</div>';
+        menuBackdrop.appendChild(box);
+        document.body.appendChild(menuBackdrop);
+        requestAnimationFrame(() => menuBackdrop.classList.add('visible'));
+
+        box.addEventListener('click', (e) => {
+            const t = e.target.closest('[data-action]');
+            if (!t) return;
+            const act = t.dataset.action;
+            closeMenu();
+            if (act === 'yes') { try { onYes(); } catch (_) {} }
+        });
+        menuBackdrop.addEventListener('click', (e) => {
+            if (e.target === menuBackdrop) closeMenu();
+        });
+    }
+
+    /* ========================================================
+       PUBLICACIONES — Cargar y renderizar
+       ======================================================== */
+    function renderPosts() {
+        const list  = $('cm-list');
+        const empty = $('cm-empty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (!postsCache.length) {
+            if (empty) empty.style.display = '';
+            return;
+        }
+        if (empty) empty.style.display = 'none';
+
+        postsCache.forEach(p => list.appendChild(buildPostCard(p)));
+    }
+
+    function buildPostCard(post) {
+        const wrap = document.createElement('div');
+        wrap.className = 'cm-post';
+        wrap.dataset.postId = post.id;
+
+        const isOwner = currentUser && post.uid === currentUser.uid;
+
+        if (isOwner) {
+            const menuBtn = document.createElement('button');
+            menuBtn.type = 'button';
+            menuBtn.className = 'cm-post-menu-btn';
+            menuBtn.setAttribute('aria-label', 'Opciones');
+            menuBtn.textContent = '⋮';
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showPostMenu(post);
+            });
+            wrap.appendChild(menuBtn);
+        }
+
+        const header = document.createElement('div');
+        header.className = 'cm-post-header';
+        const av = document.createElement('div');
+        av.className = 'cm-post-avatar';
+        av.innerHTML = avatarHTML(post);
+        header.appendChild(av);
+
+        const info = document.createElement('div');
+        info.className = 'cm-post-author';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'cm-post-author-name';
+        nameEl.textContent = post.autorNombre || 'Usuario';
+        info.appendChild(nameEl);
+        const timeEl = document.createElement('span');
+        timeEl.className = 'cm-post-author-time';
+        timeEl.textContent = timeAgo(post.fecha) + (post.editado ? ' · editado' : '');
+        info.appendChild(timeEl);
+        header.appendChild(info);
+        wrap.appendChild(header);
+
+        if (post.texto) {
+            const txt = document.createElement('div');
+            txt.className = 'cm-post-text';
+            txt.textContent = post.texto;
+            wrap.appendChild(txt);
+        }
+
+        if (post.cancion && post.cancion.titulo) {
+            const song = document.createElement('div');
+            song.className = 'cm-post-song';
+            song.innerHTML =
+                '<div class="cm-post-song-thumb">' +
+                    (post.cancion.portada
+                        ? '<img src="' + esc(post.cancion.portada) + '" alt="" loading="lazy">'
+                        : '') +
+                '</div>' +
+                '<div class="cm-post-song-info">' +
+                    '<span class="cm-post-song-title">' + esc(post.cancion.titulo) + '</span>' +
+                    '<span class="cm-post-song-sub">' + esc(post.cancion.artista || 'Artista') + '</span>' +
+                '</div>' +
+                '<div class="cm-post-song-play">▶</div>';
+            song.addEventListener('click', () => playSongFromPost(post.cancion));
+            wrap.appendChild(song);
+        }
+
+        const commentBtn = document.createElement('button');
+        commentBtn.type = 'button';
+        commentBtn.className = 'cm-post-comment';
+        commentBtn.innerHTML = 'Comentar' +
+            (post.comentariosCount > 0
+                ? '<span class="cm-post-comment-count">(' + post.comentariosCount + ')</span>'
+                : '');
+        commentBtn.addEventListener('click', () => openComments(post));
+        wrap.appendChild(commentBtn);
+
+        return wrap;
+    }
+
+    function showPostMenu(post) {
+        showMenu('Publicación', [
+            {
+                label: 'Editar',
+                icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+                onClick: () => startEditPost(post)
+            },
+            {
+                label: 'Compartir por mensaje',
+                icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
+                onClick: () => sharePostByMessage(post)
+            },
+            {
+                label: 'Eliminar',
+                danger: true,
+                icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+                onClick: () => confirmDeletePost(post)
+            }
+        ]);
+    }
+
+    /* ========================================================
+       FIRESTORE — CRUD
+       ======================================================== */
+    function listenPosts() {
+        if (unsubPosts) { unsubPosts(); unsubPosts = null; }
+        if (!currentUser) return;
+        unsubPosts = firebase.firestore()
+            .collection(COL_POSTS)
+            .orderBy('fecha', 'desc')
+            .limit(100)
+            .onSnapshot(async (snap) => {
+                const docs = snap.docs.map(d => {
+                    const data = d.data() || {};
+                    return {
+                        id: d.id,
+                        uid: data.uid || '',
+                        autorNombre: data.autorNombre || 'Usuario',
+                        autorFoto: data.autorFoto || '',
+                        texto: data.texto || '',
+                        cancion: data.cancion || null,
+                        fecha: data.fecha && typeof data.fecha.toDate === 'function'
+                            ? data.fecha.toDate() : null,
+                        editado: data.editado === true,
+                        comentariosCount: 0
+                    };
+                });
+                postsCache = docs;
+                renderPosts();
+            }, err => {
+                console.warn('[COMUNIDAD] Error posts:', err);
+                postsCache = [];
+                renderPosts();
+            });
+    }
+
+    async function createPost(texto, cancion) {
+        if (!currentUser) throw new Error('Sin sesión');
+        const ref = await firebase.firestore().collection(COL_POSTS).add({
+            uid: currentUser.uid,
+            autorNombre: currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Usuario'),
+            autorFoto: currentUser.photoURL || '',
+            texto: texto || '',
+            cancion: cancion ? {
+                titulo: cancion.titulo || '',
+                artista: cancion.artista || '',
+                portada: cancion.portada || '',
+                audioUrl: cancion.audioUrl || ''
+            } : null,
+            fecha: firebase.firestore.FieldValue.serverTimestamp(),
+            editado: false
+        });
+        return ref.id;
+    }
+
+    async function updatePost(postId, nuevoTexto, nuevaCancion) {
+        if (!currentUser) return;
+        await firebase.firestore().collection(COL_POSTS).doc(postId).update({
+            texto: nuevoTexto || '',
+            cancion: nuevaCancion ? {
+                titulo: nuevaCancion.titulo || '',
+                artista: nuevaCancion.artista || '',
+                portada: nuevaCancion.portada || '',
+                audioUrl: nuevaCancion.audioUrl || ''
+            } : null,
+            editado: true
+        });
+    }
+
+    async function deletePostFull(postId) {
+        if (!currentUser) return;
+        const postRef = firebase.firestore().collection(COL_POSTS).doc(postId);
+
+        try {
+            const commentsSnap = await postRef.collection(SUB_COMENT).limit(500).get();
+            if (!commentsSnap.empty) {
+                const chunks = [];
+                let batch = firebase.firestore().batch();
+                let count = 0;
+                commentsSnap.forEach(doc => {
+                    batch.delete(doc.ref);
+                    count++;
+                    if (count === 450) {
+                        chunks.push(batch.commit());
+                        batch = firebase.firestore().batch();
+                        count = 0;
+                    }
+                });
+                if (count > 0) chunks.push(batch.commit());
+                await Promise.all(chunks);
+            }
+        } catch (e) {
+            console.warn('[COMUNIDAD] Error borrando comentarios:', e);
+        }
+
+        await postRef.delete();
+    }
+
+    /* ========================================================
+       VISTA PRINCIPAL
+       ======================================================== */
+    function openComunidad() {
+        openView('comunidad-view');
+        const sc = $('cm-scroll');
+        if (sc) sc.scrollTop = 0;
+        listenPosts();
+    }
+    function closeComunidad() {
+        closeView('comunidad-view');
+        if (unsubPosts) { unsubPosts(); unsubPosts = null; }
+    }
+
+    /* ========================================================
+       CREAR PUBLICACIÓN
+       ======================================================== */
+    function openCrearView(editPost) {
+        editingPostId = editPost ? editPost.id : null;
+        selectedSong = editPost && editPost.cancion ? Object.assign({}, editPost.cancion) : null;
+
+        const titleEl = $('cmc-title');
+        if (titleEl) titleEl.textContent = editPost ? 'Editar publicación' : 'Publicar algo';
+
+        const txt = $('cmc-textarea');
+        if (txt) txt.value = editPost ? (editPost.texto || '') : '';
+
+        const search = $('cmc-search');
+        if (search) search.value = '';
+        const res = $('cmc-song-results');
+        if (res) { res.innerHTML = ''; res.style.display = 'none'; }
+        renderSelectedSong();
+
+        const status = $('cmc-status');
+        if (status) { status.textContent = ''; status.classList.remove('ok'); }
+        const pubBtn = $('cmc-publish');
+        if (pubBtn) { pubBtn.disabled = false; pubBtn.textContent = editPost ? 'Guardar cambios' : 'Publicar'; }
+
+        openView('comunidad-crear-view');
+        setTimeout(() => txt && txt.focus(), 200);
+    }
+    function closeCrearView() {
+        closeView('comunidad-crear-view');
+        editingPostId = null;
+        selectedSong = null;
+    }
+    function renderSelectedSong() {
+        const box = $('cmc-song-selected');
+        if (!box) return;
+        if (!selectedSong) {
+            box.style.display = 'none';
+            box.innerHTML = '';
+            return;
+        }
+        box.style.display = '';
+        box.innerHTML =
+            '<div class="cmc-song-selected-thumb">' +
+                (selectedSong.portada
+                    ? '<img src="' + esc(selectedSong.portada) + '" alt="">'
+                    : '') +
+            '</div>' +
+            '<div class="cmc-song-selected-info">' +
+                '<span class="cmc-song-selected-title">' + esc(selectedSong.titulo || '') + '</span>' +
+                '<span class="cmc-song-selected-sub">' + esc(selectedSong.artista || 'Artista') + '</span>' +
+            '</div>' +
+            '<button type="button" class="cmc-song-remove" aria-label="Quitar canción">&times;</button>';
+        box.querySelector('.cmc-song-remove').addEventListener('click', () => {
+            selectedSong = null;
+            renderSelectedSong();
+        });
+    }
+
+    function searchSongsInPlaylist(q) {
+        const list = $('playlist');
+        if (!list) return [];
+        const needle = String(q || '').toLowerCase().trim();
+        if (!needle) return [];
+        const out = [];
+        list.querySelectorAll('.playlist-item').forEach(item => {
+            const title = (item.querySelector('.item-title')?.textContent || '').trim();
+            const sub   = (item.querySelector('.item-subtitle')?.textContent || '').trim();
+            const album = (item.querySelector('.Album')?.textContent || '').trim();
+            const blob = (title + ' ' + sub + ' ' + album).toLowerCase();
+            if (!blob.includes(needle)) return;
+            const img = item.querySelector('.thumbnail img');
+            out.push({
+                titulo: title,
+                artista: sub.split('·')[0].trim() || 'Artista',
+                portada: img ? (img.getAttribute('src') || '') : '',
+                audioUrl: item.dataset.src || ''
+            });
+            if (out.length >= 20) return;
+        });
+        return out;
+    }
+    function renderSongResults(items) {
+        const box = $('cmc-song-results');
+        if (!box) return;
+        box.innerHTML = '';
+        if (!items.length) {
+            box.style.display = 'none';
+            return;
+        }
+        items.forEach(song => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'cmc-song-result-row';
+            row.innerHTML =
+                '<div class="cmc-song-result-thumb">' +
+                    (song.portada ? '<img src="' + esc(song.portada) + '" alt="" loading="lazy">' : '') +
+                '</div>' +
+                '<div class="cmc-song-result-info">' +
+                    '<span class="cmc-song-result-title">' + esc(song.titulo) + '</span>' +
+                    '<span class="cmc-song-result-sub">' + esc(song.artista) + '</span>' +
+                '</div>';
+            row.addEventListener('click', () => {
+                selectedSong = song;
+                renderSelectedSong();
+                const s = $('cmc-search');
+                if (s) s.value = '';
+                box.style.display = 'none';
+                box.innerHTML = '';
+            });
+            box.appendChild(row);
+        });
+        box.style.display = '';
+    }
+
+    async function publishFromCreateView() {
+        const status = $('cmc-status');
+        const btn    = $('cmc-publish');
+        const txt    = $('cmc-textarea');
+        if (!currentUser) return;
+
+        const texto = (txt?.value || '').trim();
+        if (!texto && !selectedSong) {
+            if (status) { status.textContent = 'Escribe algo o añade una canción'; status.classList.remove('ok'); }
+            return;
+        }
+        if (btn) { btn.disabled = true; btn.textContent = 'Publicando…'; }
+        if (status) { status.textContent = ''; status.classList.remove('ok'); }
+
+        try {
+            if (editingPostId) {
+                await updatePost(editingPostId, texto, selectedSong);
+                if (status) { status.textContent = '✓ Publicación actualizada'; status.classList.add('ok'); }
+            } else {
+                await createPost(texto, selectedSong);
+                if (status) { status.textContent = '✓ Publicación creada'; status.classList.add('ok'); }
+            }
+            setTimeout(() => { closeCrearView(); openComunidad(); }, 500);
+        } catch (e) {
+            console.warn('[COMUNIDAD] Error al publicar:', e);
+            if (status) { status.textContent = 'Error al publicar. Intenta de nuevo.'; status.classList.remove('ok'); }
+            if (btn) { btn.disabled = false; btn.textContent = editingPostId ? 'Guardar cambios' : 'Publicar'; }
+        }
+    }
+
+    /* ========================================================
+       COMPARTIR POST POR MENSAJE
+       ======================================================== */
+    function sharePostByMessage(post) {
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+        const cancionAttachment = post.cancion ? {
+            titulo: post.cancion.titulo,
+            artista: post.cancion.artista,
+            portada: post.cancion.portada,
+            audioUrl: post.cancion.audioUrl
+        } : null;
+
+        window.__pendingCommunityShare = {
+            texto: post.texto || '',
+            autor: post.autorNombre || 'Usuario',
+            cancion: cancionAttachment
+        };
+
+        const link = document.getElementById('mensajes-link');
+        if (link) link.click();
+
+        setTimeout(() => {
+            const btn = document.getElementById('msg-new-btn');
+            if (btn) btn.click();
+
+            setTimeout(() => {
+                const toast = document.getElementById('omega-toast');
+                if (toast) {
+                    toast.textContent = 'Elige a quién enviar la publicación';
+                    toast.classList.add('visible');
+                    setTimeout(() => toast.classList.remove('visible'), 2200);
+                }
+            }, 260);
+        }, 260);
+    }
+
+    /* Hook: inyecta el adjunto pendiente cuando se abre un chat */
+    function hookChatAttachmentInjection() {
+        if (window.__comunidadChatInjectionHooked) return;
+        window.__comunidadChatInjectionHooked = true;
+
+        const chatView = document.getElementById('chat-view');
+        if (!chatView) return;
+        const obs = new MutationObserver(() => {
+            if (!chatView.classList.contains('visible')) return;
+            const pend = window.__pendingCommunityShare;
+            if (!pend) return;
+
+            setTimeout(() => {
+                const input = document.getElementById('chat-input');
+                if (input && pend.texto && !input.value) {
+                    const autor = pend.autor ? '@' + pend.autor + ': ' : '';
+                    input.value = autor + pend.texto;
+                }
+                // Intentamos inyectar la canción adjunta si el sistema de mensajes la soporta
+                window.dispatchEvent(new CustomEvent('omega:comunidadAttach', {
+                    detail: { cancion: pend.cancion }
+                }));
+                window.__pendingCommunityShare = null;
+            }, 500);
+        });
+        obs.observe(chatView, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    /* ========================================================
+       EDICIÓN / ELIMINACIÓN
+       ======================================================== */
+    function startEditPost(post) {
+        openCrearView(post);
+    }
+    function confirmDeletePost(post) {
+        confirmDialog(
+            '¿Eliminar publicación?',
+            'Se eliminará la publicación y todos sus comentarios. Esta acción no se puede deshacer.',
+            async () => {
+                try {
+                    await deletePostFull(post.id);
+                } catch (e) {
+                    console.warn('[COMUNIDAD] Error eliminando:', e);
+                }
+            }
+        );
+    }
+
+    /* ========================================================
+       COMENTARIOS
+       ======================================================== */
+    function openComments(post) {
+        activePostId = post.id;
+        activePostData = post;
+        openView('comentarios-view');
+
+        const prev = $('com-post-preview');
+        if (prev) {
+            prev.innerHTML = '';
+            if (post.texto) {
+                prev.textContent = post.texto;
+            } else if (post.cancion && post.cancion.titulo) {
+                prev.textContent = '🎵 ' + post.cancion.titulo;
+            } else {
+                prev.textContent = '(Sin texto)';
+            }
+        }
+
+        const input = $('com-input');
+        if (input) input.value = '';
+        listenComments(post.id);
+        setTimeout(() => input && input.focus(), 220);
+    }
+    function closeComments() {
+        closeView('comentarios-view');
+        if (unsubComments) { unsubComments(); unsubComments = null; }
+        activePostId = null;
+        activePostData = null;
+        editingCommentId = null;
+    }
+    function listenComments(postId) {
+        if (unsubComments) { unsubComments(); unsubComments = null; }
+        unsubComments = firebase.firestore()
+            .collection(COL_POSTS).doc(postId)
+            .collection(SUB_COMENT)
+            .orderBy('fecha', 'asc')
+            .limit(200)
+            .onSnapshot(snap => {
+                const comments = snap.docs.map(d => {
+                    const data = d.data() || {};
+                    return {
+                        id: d.id,
+                        uid: data.uid || '',
+                        autorNombre: data.autorNombre || 'Usuario',
+                        autorFoto: data.autorFoto || '',
+                        texto: data.texto || '',
+                        fecha: data.fecha && typeof data.fecha.toDate === 'function'
+                            ? data.fecha.toDate() : null,
+                        editado: data.editado === true
+                    };
+                });
+                renderComments(comments);
+            }, err => {
+                console.warn('[COMUNIDAD] Error comentarios:', err);
+                renderComments([]);
+            });
+    }
+    function renderComments(comments) {
+        const list = $('com-list');
+        const empty = $('com-empty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (!comments.length) {
+            if (empty) empty.style.display = '';
+            return;
+        }
+        if (empty) empty.style.display = 'none';
+
+        comments.forEach(c => list.appendChild(buildCommentRow(c)));
+    }
+    function buildCommentRow(c) {
+        const row = document.createElement('div');
+        row.className = 'com-row';
+        row.dataset.commentId = c.id;
+
+        const av = document.createElement('div');
+        av.className = 'com-avatar';
+        av.innerHTML = avatarHTML({ autorNombre: c.autorNombre, autorFoto: c.autorFoto });
+        row.appendChild(av);
+
+        const body = document.createElement('div');
+        body.className = 'com-body';
+
+        const name = document.createElement('span');
+        name.className = 'com-name';
+        name.textContent = c.autorNombre;
+        body.appendChild(name);
+
+        const time = document.createElement('span');
+        time.className = 'com-time';
+        time.textContent = timeAgo(c.fecha) + (c.editado ? ' · editado' : '');
+        body.appendChild(time);
+
+        const txt = document.createElement('div');
+        txt.className = 'com-text';
+        txt.textContent = c.texto || '';
+        body.appendChild(txt);
+
+        row.appendChild(body);
+
+        if (currentUser && c.uid === currentUser.uid) {
+            const menuBtn = document.createElement('button');
+            menuBtn.type = 'button';
+            menuBtn.className = 'com-menu-btn';
+            menuBtn.setAttribute('aria-label', 'Opciones del comentario');
+            menuBtn.textContent = '⋮';
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showCommentMenu(c, row);
+            });
+            row.appendChild(menuBtn);
+        }
+
+        return row;
+    }
+
+    function showCommentMenu(comment, rowEl) {
+        showMenu('Comentario', [
+            {
+                label: 'Editar',
+                icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+                onClick: () => startEditComment(comment, rowEl)
+            },
+            {
+                label: 'Eliminar',
+                danger: true,
+                icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+                onClick: () => confirmDeleteComment(comment)
+            }
+        ]);
+    }
+
+    function startEditComment(comment, rowEl) {
+        if (editingCommentId === comment.id) return;
+        editingCommentId = comment.id;
+
+        const txt = rowEl.querySelector('.com-text');
+        if (!txt) return;
+        const original = comment.texto;
+
+        const box = document.createElement('div');
+        box.className = 'com-edit-box';
+        box.innerHTML =
+            '<input type="text" class="com-edit-input" value="' + esc(original) + '">' +
+            '<button type="button" class="com-edit-btn com-edit-cancel">Cancelar</button>' +
+            '<button type="button" class="com-edit-btn com-edit-save">Guardar</button>';
+
+        const input = box.querySelector('.com-edit-input');
+        txt.style.display = 'none';
+        txt.parentNode.insertBefore(box, txt.nextSibling);
+
+        setTimeout(() => input && input.focus(), 60);
+
+        const cancelar = () => {
+            editingCommentId = null;
+            box.remove();
+            txt.style.display = '';
+        };
+        const guardar = async () => {
+            const nuevo = (input.value || '').trim();
+            if (!nuevo) { cancelar(); return; }
+            try {
+                await firebase.firestore()
+                    .collection(COL_POSTS).doc(activePostId)
+                    .collection(SUB_COMENT).doc(comment.id)
+                    .update({ texto: nuevo, editado: true });
+                editingCommentId = null;
+            } catch (e) {
+                console.warn('[COMUNIDAD] Error editando comentario:', e);
+                cancelar();
+            }
+        };
+        box.querySelector('.com-edit-cancel').addEventListener('click', cancelar);
+        box.querySelector('.com-edit-save').addEventListener('click', guardar);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); guardar(); }
+            else if (e.key === 'Escape') { cancelar(); }
+        });
+    }
+
+    function confirmDeleteComment(comment) {
+        confirmDialog(
+            '¿Eliminar comentario?',
+            'Se eliminará tu comentario. Esta acción no se puede deshacer.',
+            async () => {
+                try {
+                    await firebase.firestore()
+                        .collection(COL_POSTS).doc(activePostId)
+                        .collection(SUB_COMENT).doc(comment.id)
+                        .delete();
+                } catch (e) {
+                    console.warn('[COMUNIDAD] Error eliminando comentario:', e);
+                }
+            }
+        );
+    }
+
+    async function sendComment() {
+        if (!currentUser || !activePostId) return;
+        const input = $('com-input');
+        const texto = (input?.value || '').trim();
+        if (!texto) return;
+
+        if (input) input.value = '';
+        try {
+            await firebase.firestore()
+                .collection(COL_POSTS).doc(activePostId)
+                .collection(SUB_COMENT)
+                .add({
+                    uid: currentUser.uid,
+                    autorNombre: currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : 'Usuario'),
+                    autorFoto: currentUser.photoURL || '',
+                    texto,
+                    fecha: firebase.firestore.FieldValue.serverTimestamp(),
+                    editado: false
+                });
+        } catch (e) {
+            console.warn('[COMUNIDAD] Error enviando comentario:', e);
+            if (input) input.value = texto;
+        }
+    }
+
+    /* ========================================================
+       REPRODUCIR CANCIÓN DE UN POST
+       ======================================================== */
+    function playSongFromPost(cancion) {
+        if (!cancion || !cancion.audioUrl) return;
+        const list = $('playlist');
+        if (!list) return;
+        const target = String(cancion.titulo || '').toLowerCase();
+        for (const it of list.querySelectorAll('.playlist-item')) {
+            const t = (it.querySelector('.item-title')?.textContent || '').trim().toLowerCase();
+            if (t && t === target) { it.click(); return; }
+        }
+        const div = document.createElement('div');
+        div.className = 'playlist-item';
+        div.dataset.src = cancion.audioUrl;
+        div.dataset.comunidadSong = '1';
+        div.dataset.title = cancion.titulo || '';
+        const cover = cancion.portada || 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
+        div.innerHTML =
+            '<div class="thumbnail"><img src="' + esc(cover) + '" alt="" loading="lazy"></div>' +
+            '<div class="item-info">' +
+                '<span class="item-title">' + esc(cancion.titulo || '') + '</span>' +
+                '<span class="item-subtitle">' + esc(cancion.artista || 'Artista') + '</span>' +
+            '</div>';
+        const homeView = list.querySelector('#home-view');
+        if (homeView) list.insertBefore(div, homeView.nextSibling);
+        else list.insertBefore(div, list.firstChild);
+        setTimeout(() => div.click(), 30);
+    }
+
+    /* ========================================================
+       INIT
+       ======================================================== */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+
+        const bnCom = $('bn-comunidad');
+        if (bnCom && bnCom.dataset.bnReady !== '1') {
+            bnCom.dataset.bnReady = '1';
+            bnCom.addEventListener('click', () => {
+                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+                openComunidad();
+            });
+        }
+
+        const back = $('cm-back');
+        if (back && back.dataset.ready !== '1') {
+            back.dataset.ready = '1';
+            back.addEventListener('click', closeComunidad);
+        }
+
+        const pubBtn = $('cm-publish-btn');
+        if (pubBtn && pubBtn.dataset.ready !== '1') {
+            pubBtn.dataset.ready = '1';
+            pubBtn.addEventListener('click', () => openCrearView(null));
+        }
+
+        const cback = $('cmc-back');
+        if (cback && cback.dataset.ready !== '1') {
+            cback.dataset.ready = '1';
+            cback.addEventListener('click', closeCrearView);
+        }
+        const cpub = $('cmc-publish');
+        if (cpub && cpub.dataset.ready !== '1') {
+            cpub.dataset.ready = '1';
+            cpub.addEventListener('click', publishFromCreateView);
+        }
+
+        const search = $('cmc-search');
+        if (search && search.dataset.ready !== '1') {
+            search.dataset.ready = '1';
+            let deb = null;
+            search.addEventListener('input', () => {
+                if (deb) clearTimeout(deb);
+                const q = search.value;
+                deb = setTimeout(() => {
+                    const items = searchSongsInPlaylist(q);
+                    renderSongResults(items);
+                }, 140);
+            });
+            search.addEventListener('focus', () => {
+                const items = searchSongsInPlaylist(search.value);
+                if (items.length) renderSongResults(items);
+            });
+        }
+
+        const cback2 = $('com-back');
+        if (cback2 && cback2.dataset.ready !== '1') {
+            cback2.dataset.ready = '1';
+            cback2.addEventListener('click', closeComments);
+        }
+        const sendBtn = $('com-send');
+        if (sendBtn && sendBtn.dataset.ready !== '1') {
+            sendBtn.dataset.ready = '1';
+            sendBtn.addEventListener('click', sendComment);
+        }
+        const comInput = $('com-input');
+        if (comInput && comInput.dataset.ready !== '1') {
+            comInput.dataset.ready = '1';
+            comInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); sendComment(); }
+            });
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (menuBackdrop) { e.stopPropagation(); closeMenu(); return; }
+            if ($('comentarios-view')?.classList.contains('visible')) { e.stopPropagation(); closeComments(); return; }
+            if ($('comunidad-crear-view')?.classList.contains('visible')) { e.stopPropagation(); closeCrearView(); return; }
+            if ($('comunidad-view')?.classList.contains('visible')) { e.stopPropagation(); closeComunidad(); }
+        }, true);
+
+        MAIN_VIEWS.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el || el.dataset.comWatch === '1') return;
+            el.dataset.comWatch = '1';
+            const obs = new MutationObserver((muts) => {
+                for (const m of muts) {
+                    if (m.attributeName === 'class' && el.classList.contains('visible')) {
+                        COM_VIEWS.forEach(cid => {
+                            const v = document.getElementById(cid);
+                            if (v && v.classList.contains('visible')) {
+                                v.classList.remove('visible');
+                                v.setAttribute('aria-hidden', 'true');
+                            }
+                        });
+                        break;
+                    }
+                }
+            });
+            obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+        });
+
+        hookChatAttachmentInjection();
+
+        firebase.auth().onAuthStateChanged(user => {
+            currentUser = user;
+            if (!user) {
+                if (unsubPosts) { unsubPosts(); unsubPosts = null; }
+                if (unsubComments) { unsubComments(); unsubComments = null; }
+                postsCache = [];
+                renderPosts();
+            } else {
+                if ($('comunidad-view')?.classList.contains('visible')) listenPosts();
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    window.__openComunidad = openComunidad;
+})();
