@@ -11,7 +11,7 @@
     <div class="auth-gate" id="auth-gate" aria-hidden="false">
         <div class="auth-gate-inner">
             <img class="auth-gate-logo"
-                 src="https://www.dropbox.com/scl/fi/6e7qxx06cip1720viw4zt/Omega.png?rlkey=pujvgx4l2w9cl3c2wiyk0tbgf&st=i9gpcfpm&raw=1"
+                 src="https://cdn.pixabay.com/animation/2023/02/21/12/15/12-15-04-910_512.gif"
                  alt="Kerim Music">
             <h1 class="auth-gate-title">OmegaBeats</h1>
             <p class="auth-gate-sub">Inicia sesión con tu cuenta de Google para continuar</p>
@@ -41,7 +41,7 @@
             </button>
 
             <div class="header-logo">
-                <img src="https://www.dropbox.com/scl/fi/6e7qxx06cip1720viw4zt/Omega.png?rlkey=pujvgx4l2w9cl3c2wiyk0tbgf&st=i9gpcfpm&raw=1"
+                <img src="https://cdn.pixabay.com/animation/2023/02/21/12/15/12-15-04-910_512.gif"
                      alt="kerimmusic" loading="lazy">
             </div>
 
@@ -511,6 +511,59 @@
                         <polygon points="22 2 15 22 11 13 2 9 22 2" fill="#ffffff" stroke="none"/>
                     </svg>
                 </button>
+            </div>
+        </div>
+
+        <!-- =========================================================
+             VISTA: SUBIR CANCIÓN DESDE YOUTUBE
+             ========================================================= -->
+        <div class="youtube-upload-view" id="youtube-upload-view" aria-hidden="true">
+            <div class="yt-header">
+                <button class="yt-back" id="yt-back" type="button" aria-label="Volver">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                         stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"
+                         stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                </button>
+                <h1 class="yt-title">Subir desde YouTube</h1>
+            </div>
+
+            <div class="yt-scroll">
+                <div class="yt-hero">
+                    <div class="yt-hero-icon">
+                        <svg viewBox="0 0 24 24" width="52" height="52" fill="#ff0000">
+                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                    </div>
+                    <h2 class="yt-hero-title">Pega la URL del video</h2>
+                    <p class="yt-hero-sub">Obtendremos automáticamente la portada, el título y el género</p>
+                </div>
+
+                <div class="yt-input-wrap">
+                    <input type="text" class="yt-url-input" id="yt-url-input"
+                           placeholder="https://www.youtube.com/watch?v=..."
+                           autocomplete="off" spellcheck="false">
+                    <button type="button" class="yt-fetch-btn" id="yt-fetch-btn">Obtener info</button>
+                </div>
+
+                <div class="yt-preview" id="yt-preview" style="display:none;"></div>
+
+                <p class="yt-status" id="yt-status"></p>
+
+                <div class="yt-tips">
+                    <div class="yt-tip-title">💡 Cómo se completa la información</div>
+                    <ul class="yt-tip-list">
+                        <li><b>Título</b> — se obtiene del propio video.</li>
+                        <li><b>Portada</b> — miniatura en alta calidad del video.</li>
+                        <li><b>Artista</b> — canal de YouTube que subió el video.</li>
+                        <li><b>Género</b> — se detecta automáticamente por palabras clave del título.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="yt-footer">
+                <button type="button" class="yt-save-btn" id="yt-save-btn" disabled>Guardar canción</button>
             </div>
         </div>
 
