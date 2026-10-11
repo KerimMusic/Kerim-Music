@@ -2179,99 +2179,57 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 /* ============================================================
-   13. CARGAR CANCIONES DEL USUARIO
-   ------------------------------------------------------------
-   Las canciones (subidas o desde YouTube) se guardan en la
-   subcolección: historial_usuarios/{uid}/canciones/{docId}
-   Leemos esa subcolección sin .orderBy para que no falle si
-   algún doc no tiene 'fecha'. Ordenamos en el cliente.
+   13. CARGAR CANCIONES SUBIDAS POR USUARIOS
    ============================================================ */
 (function () {
     'use strict';
-
-    let unsubCanciones = null;
-
-    function renderCanciones(docs, playlist) {
-        playlist.querySelectorAll('.playlist-item[data-user-upload="1"]').forEach(el => el.remove());
-
-        docs.sort((a, b) => {
-            const fa = a.d.fecha && typeof a.d.fecha.seconds === 'number' ? a.d.fecha.seconds : 0;
-            const fb = b.d.fecha && typeof b.d.fecha.seconds === 'number' ? b.d.fecha.seconds : 0;
-            return fb - fa;
-        });
-
-        const frag = document.createDocumentFragment();
-        docs.forEach(({ d }) => {
-            if (!d.audioUrl || !d.titulo) return;
-            const div = document.createElement('div');
-            div.className = 'playlist-item';
-            div.dataset.src = d.audioUrl;
-            div.dataset.userUpload = '1';
-            div.dataset.title = d.titulo;
-            if (d.album) div.dataset.album = d.album;
-
-            const cover = d.imagenUrl || 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
-            const artista = d.artista || 'Artista';
-            const albumHTML = d.album ? `<span class="Album">${d.album}</span>` : '';
-            const esYouTube = d.origen === 'youtube' || /youtube\.com|youtu\.be/.test(d.audioUrl);
-            const sourceTag = esYouTube ? 'YouTube' : 'Subido';
-
-            div.innerHTML = `
-                <div class="thumbnail">
-                    <img src="${cover}" alt="Portada" loading="lazy">
-                </div>
-                <div class="item-info">
-                    <span class="item-title">${d.titulo}</span>
-                    <span class="item-subtitle">${artista} · ${sourceTag}</span>
-                    ${albumHTML}
-                </div>
-            `;
-            frag.appendChild(div);
-        });
-
-        const homeView = playlist.querySelector('#home-view');
-        if (homeView) playlist.insertBefore(frag, homeView.nextSibling);
-        else playlist.insertBefore(frag, playlist.firstChild);
-
-        if (typeof window.__buildListenAgain === 'function') window.__buildListenAgain();
-        if (typeof window.__buildArtists === 'function') { try { window.__buildArtists(); } catch (_) {} }
-        if (typeof window.__buildAlbums === 'function') { try { window.__buildAlbums(); } catch (_) {} }
-        if (typeof window.__applySearchVisibility === 'function') window.__applySearchVisibility();
-
-        console.log('[Canciones usuario] renderizadas:', docs.length);
-    }
-
-    function listenCancionesDelUsuario(user) {
-        if (unsubCanciones) { unsubCanciones(); unsubCanciones = null; }
-        const playlist = document.getElementById('playlist');
-        if (!playlist || !user) return;
-
-        const db = firebase.firestore();
-        const ref = db.collection('historial_usuarios').doc(user.uid).collection('canciones');
-
-        unsubCanciones = ref.onSnapshot((snap) => {
-            const docs = [];
-            snap.forEach(doc => docs.push({ id: doc.id, d: doc.data() || {} }));
-            renderCanciones(docs, playlist);
-        }, (err) => {
-            console.error('⚠️ No se pudieron cargar tus canciones:', err.code, err.message);
-        });
-    }
-
     function init() {
-        if (typeof firebase === 'undefined' || !firebase.firestore || !firebase.auth) {
-            setTimeout(init, 300);
-            return;
-        }
-        firebase.auth().onAuthStateChanged(user => {
-            if (user) listenCancionesDelUsuario(user);
-            else if (unsubCanciones) { unsubCanciones(); unsubCanciones = null; }
-        });
+        if (typeof firebase === 'undefined' || !firebase.firestore) { setTimeout(init, 300); return; }
+        const db = firebase.firestore();
+        const playlist = document.getElementById('playlist');
+        if (!playlist) return;
+        db.collection('canciones_usuarios')
+          .orderBy('fecha', 'desc')
+          .onSnapshot((snap) => {
+            playlist.querySelectorAll('.playlist-item[data-user-upload="1"]').forEach(el => el.remove());
+            const frag = document.createDocumentFragment();
+            snap.forEach(doc => {
+                const d = doc.data();
+                if (!d.audioUrl || !d.titulo) return;
+                const div = document.createElement('div');
+                div.className = 'playlist-item';
+                div.dataset.src = d.audioUrl;
+                div.dataset.userUpload = '1';
+                div.dataset.title = d.titulo;
+                if (d.album) div.dataset.album = d.album;
+                const cover = d.imagenUrl || 'https://via.placeholder.com/60/1a1a1a/666?text=%E2%99%AA';
+                const artista = d.artista || 'Artista';
+                const albumHTML = d.album ? `<span class="Album">${d.album}</span>` : '';
+                div.innerHTML = `
+                    <div class="thumbnail">
+                        <img src="${cover}" alt="Portada" loading="lazy">
+                    </div>
+                    <div class="item-info">
+                        <span class="item-title">${d.titulo}</span>
+                        <span class="item-subtitle">${artista} · Subido</span>
+                        ${albumHTML}
+                    </div>
+                `;
+                frag.appendChild(div);
+            });
+            const homeView = playlist.querySelector('#home-view');
+            if (homeView) playlist.insertBefore(frag, homeView.nextSibling);
+            else playlist.insertBefore(frag, playlist.firstChild);
+            if (typeof window.__buildListenAgain === 'function') window.__buildListenAgain();
+            if (typeof window.__buildArtists === 'function') { try { window.__buildArtists(); } catch (_) {} }
+            if (typeof window.__buildAlbums === 'function') { try { window.__buildAlbums(); } catch (_) {} }
+            if (typeof window.__applySearchVisibility === 'function') window.__applySearchVisibility();
+          }, (err) => { console.warn('⚠️ No se pudieron cargar canciones:', err); });
     }
-
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 })();
+
 /* ============================================================
    14. INTEGRACIÓN CON "SUBIR MÚSICA"
    ============================================================ */
@@ -2438,6 +2396,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
                 if (typeof firebase === 'undefined' || !firebase.auth) throw new Error('Firebase no disponible');
 
+                // ⬇️ Sincroniza las estadísticas pendientes ANTES de cerrar sesión.
+                // Si no se hace aquí, Firestore rechazará la escritura por reglas de seguridad.
                 if (typeof window.__sincronizarStatsAntesDeSalir === 'function') {
                     try { await window.__sincronizarStatsAntesDeSalir(); }
                     catch (e) { console.warn('[STATS] sync pre-logout falló:', e); }
@@ -6998,7 +6958,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const genre = sub.slice(idx + 1).trim();
         if (!genre) return '';
         const lower = genre.toLowerCase();
-        if (lower === 'subido' || lower === 'subidos' || lower === 'youtube') return '';
+        if (lower === 'subido' || lower === 'subidos') return '';
         return genre;
     }
 
@@ -8754,28 +8714,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ============================================================
    39. ESTADÍSTICAS DE HORAS ESCUCHANDO MÚSICA (optimizado)
+   ------------------------------------------------------------
+   - Play/Pausa → SOLO localStorage (0 lecturas / 0 escrituras)
+   - Ver estadísticas → 1 sola .get() sin onSnapshot
+   - Salir/app a fondo/logout → 1 sola escritura con increment()
    ============================================================ */
 (function () {
     'use strict';
 
     const $ = (id) => document.getElementById(id);
 
-    const INACTIVITY_MS    = 5 * 60 * 1000;
-    const MAX_SESSION_SECS = 6 * 60 * 60;
+    const INACTIVITY_MS    = 5 * 60 * 1000;      // 5 min sin interactuar → no cuenta
+    const MAX_SESSION_SECS = 6 * 60 * 60;        // tope de seguridad por sesión
 
-    const LS_PENDIENTE = 'omega_stats_pendiente_v1';
-    const LS_INICIO    = 'omega_stats_inicio_v1';
+    // localStorage
+    const LS_PENDIENTE = 'omega_stats_pendiente_v1'; // segundos sin sincronizar
+    const LS_INICIO    = 'omega_stats_inicio_v1';    // ms del inicio de la sesión actual
 
     const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                       'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
     let audioPlayer     = null;
     let currentUser     = null;
-    let mesesCache      = {};
+    let mesesCache      = {};        // lo leído desde Firestore
     let lastInteraction = Date.now();
     let syncing         = false;
-    let _sessionStart   = 0;
+    let _sessionStart   = 0;         // ms; 0 = sin sesión activa
 
+    /* ---------- Utilidades ---------- */
     function monthKey(d) {
         const date = d || new Date();
         return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
@@ -8794,6 +8760,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return h + ' h ' + m + ' min';
     }
 
+    /* ---------- localStorage helpers ---------- */
     function readPendiente() {
         const v = parseFloat(localStorage.getItem(LS_PENDIENTE) || '0');
         return isFinite(v) && v > 0 ? v : 0;
@@ -8823,6 +8790,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
     }
 
+    /* ---------- Sesión de escucha (100% local) ---------- */
     function startSession() {
         if (_sessionStart > 0) return;
         _sessionStart = Date.now();
@@ -8838,6 +8806,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const elapsed = (now - start) / 1000;
         if (!(elapsed > 0) || elapsed > MAX_SESSION_SECS) return;
 
+        // Solo cuenta si hubo actividad reciente o si el audio sigue sonando
         const audioPlaying = audioPlayer && !audioPlayer.paused;
         const dentro = audioPlaying || (now - lastInteraction) <= INACTIVITY_MS;
         if (!dentro) return;
@@ -8845,6 +8814,7 @@ document.addEventListener('DOMContentLoaded', () => {
         writePendiente(readPendiente() + elapsed);
     }
 
+    /* ---------- Sincronización: 1 sola escritura, SIN leer antes ---------- */
     async function sincronizarPendiente() {
         const secs = readPendiente();
         if (!currentUser || secs <= 0 || syncing) return;
@@ -8854,6 +8824,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const ref = firebase.firestore()
                 .collection('historial_usuarios').doc(currentUser.uid);
 
+            // update con dot-path + increment → NO pisa otros meses y NO necesita .get()
             try {
                 await ref.update({
                     ['tiempo_escucha.' + key]:
@@ -8862,6 +8833,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (e) {
                 const msg  = String((e && e.message) || '');
                 const code = (e && e.code) || '';
+                // Solo creamos el documento si realmente no existía
                 if (code === 'not-found' || /not.?found/i.test(msg)) {
                     await ref.set({
                         tiempo_escucha: { [key]: secs }
@@ -8870,7 +8842,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw e;
                 }
             }
-            writePendiente(0);
+            writePendiente(0);   // limpiar SOLO tras éxito
         } catch (e) {
             console.warn('[STATS] No se pudo sincronizar:', e);
         } finally {
@@ -8878,12 +8850,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    /* ---------- Lectura: 1 sola .get(), sin onSnapshot ---------- */
     async function cargarDesdeFirestore() {
         if (!currentUser) { mesesCache = {}; renderStats(); return; }
         try {
             const ref = firebase.firestore()
                 .collection('historial_usuarios').doc(currentUser.uid);
-            const snap = await ref.get();
+            const snap = await ref.get();   // ← una sola lectura
             if (snap.exists) {
                 const data = snap.data() || {};
                 mesesCache = (data.tiempo_escucha && typeof data.tiempo_escucha === 'object')
@@ -8899,10 +8872,12 @@ document.addEventListener('DOMContentLoaded', () => {
         renderStats();
     }
 
+    /* ---------- Render ---------- */
     function renderStats() {
         const curKey    = monthKey();
         const pendiente = readPendiente();
 
+        // Añade en vivo lo que dura la sesión actual (si hay una abierta)
         let enVivo = 0;
         if (_sessionStart > 0) {
             const el = (Date.now() - _sessionStart) / 1000;
@@ -8952,6 +8927,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ---------- Vistas ---------- */
     function closeOtherViews() {
         ['playlist-view','artist-profile','album-view','mi-playlist-view',
          'mensajes-view','chat-view','newmsg-view'].forEach(id => {
@@ -8970,7 +8946,7 @@ document.addEventListener('DOMContentLoaded', () => {
         view.setAttribute('aria-hidden', 'false');
         const scroll = $('st-scroll');
         if (scroll) scroll.scrollTop = 0;
-        await cargarDesdeFirestore();
+        await cargarDesdeFirestore();      // ← única lectura
     }
     function closeView() {
         const view = $('stats-view');
@@ -8996,6 +8972,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ---------- Init ---------- */
     function init() {
         if (typeof firebase === 'undefined' || !firebase.auth) {
             setTimeout(init, 300);
@@ -9033,6 +9010,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }, true);
 
+        /* === Play / Pausa / Cambio de pista → SOLO localStorage === */
         if (audioPlayer && audioPlayer.dataset.statsHook !== '1') {
             audioPlayer.dataset.statsHook = '1';
 
@@ -9043,6 +9021,7 @@ document.addEventListener('DOMContentLoaded', () => {
             audioPlayer.addEventListener('pause', closeSession);
             audioPlayer.addEventListener('ended', closeSession);
 
+            // Red de seguridad: si está sonando y no hay sesión, la abrimos
             audioPlayer.addEventListener('timeupdate', () => {
                 if (!audioPlayer.paused && _sessionStart === 0) startSession();
             });
@@ -9050,6 +9029,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         attachInteractionListeners();
 
+        /* === Sincronización al salir / fondo === */
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 closeSession();
@@ -9068,6 +9048,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sincronizarPendiente();
         });
 
+        /* === API para que el logout sincronice antes de cerrar sesión === */
         window.__sincronizarStatsAntesDeSalir = async () => {
             closeSession();
             await sincronizarPendiente();
@@ -9077,6 +9058,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (user) {
                 currentUser = user;
                 lastInteraction = Date.now();
+                // Recupera una sesión que haya quedado colgada
                 if (readInicio() > 0) closeSession();
                 await cargarDesdeFirestore();
             } else {
@@ -9170,10 +9152,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     '| index:', queue.index);
     }
 
+    /* ✅ CORREGIDO: sincroniza el índice con la canción realmente activa
+       antes de calcular la siguiente. Así, si el modo aleatorio estuvo
+       activo (eligió al azar sin tocar queue.index) o algo reprodujo un
+       item fuera del hook de clicks, el paso secuencial sigue siendo
+       correcto respecto a la canción que está sonando. */
     function stepQueue(direction) {
         if (!queue.items.length) return null;
         const dir = direction || 1;
 
+        // Sincronizar el índice con la canción realmente activa.
         const pl = $('playlist');
         if (pl) {
             const active = pl.querySelector('.playlist-item.active');
@@ -9187,7 +9175,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const rp = repeatMode();
         if (idx >= queue.items.length) {
             if (rp === 'all') idx = 0;
-            else return null;
+            else return null;                 // fin de la cola → detener
         } else if (idx < 0) {
             if (rp === 'all') idx = queue.items.length - 1;
             else idx = 0;
@@ -9318,11 +9306,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.__queueEndedHooked) return;
         window.__queueEndedHooked = true;
 
+        /* ✅ CORREGIDO: si el modo Aleatorio está ACTIVADO, no interceptamos
+           el evento "ended". Dejamos que la sección 3 gestione el cambio
+           con su comportamiento aleatorio normal. El filtro de artista ya
+           está limitado a queue.items (playlist / álbum / artista / búsqueda),
+           así que el azar solo elegirá canciones dentro del contexto. */
         document.addEventListener('ended', (e) => {
             const audio = $('audio-player');
             if (!audio || e.target !== audio) return;
             if (!queue.active) return;
-            if (repeatMode() === 'one') return;
+            if (repeatMode() === 'one') return;   // lo maneja la sección 6
 
             if (window.__omegaShuffleOn !== false) return;
 
@@ -9989,6 +9982,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try { localStorage.setItem(STORAGE_KEY, theme); } catch (_) {}
     }
 
+    /* Aplica el tema guardado inmediatamente al cargar el script,
+       para que se vea de una vez sin parpadeos. */
     if (document.body) {
         applyTheme(getSavedTheme());
     } else {
@@ -10028,6 +10023,7 @@ document.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             e.stopPropagation();
 
+            // Cerrar el submenú lateral (por si acaso)
             const sm = document.getElementById('submenu');
             const so = document.getElementById('submenu-overlay');
             if (sm) sm.classList.remove('visible');
@@ -10095,6 +10091,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let editingCommentId = null;
     let menuBackdrop     = null;
 
+    /* ---------- Utilidades ---------- */
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -10136,6 +10133,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (v) { v.classList.remove('visible'); v.setAttribute('aria-hidden', 'true'); }
     }
 
+    /* ---------- Menú contextual ---------- */
     function closeMenu() {
         if (menuBackdrop && menuBackdrop.parentNode) menuBackdrop.parentNode.removeChild(menuBackdrop);
         menuBackdrop = null;
@@ -10206,6 +10204,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* ========================================================
+       PUBLICACIONES — Cargar y renderizar
+       ======================================================== */
     function renderPosts() {
         const list  = $('cm-list');
         const empty = $('cm-empty');
@@ -10319,6 +10320,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ]);
     }
 
+    /* ========================================================
+       FIRESTORE — CRUD
+       ======================================================== */
     function listenPosts() {
         if (unsubPosts) { unsubPosts(); unsubPosts = null; }
         if (!currentUser) return;
@@ -10413,6 +10417,9 @@ document.addEventListener('DOMContentLoaded', () => {
         await postRef.delete();
     }
 
+    /* ========================================================
+       VISTA PRINCIPAL
+       ======================================================== */
     function openComunidad() {
         openView('comunidad-view');
         const sc = $('cm-scroll');
@@ -10424,6 +10431,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (unsubPosts) { unsubPosts(); unsubPosts = null; }
     }
 
+    /* ========================================================
+       CREAR PUBLICACIÓN
+       ======================================================== */
     function openCrearView(editPost) {
         editingPostId = editPost ? editPost.id : null;
         selectedSong = editPost && editPost.cancion ? Object.assign({}, editPost.cancion) : null;
@@ -10565,6 +10575,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    /* ========================================================
+       COMPARTIR POST POR MENSAJE
+       ======================================================== */
     function sharePostByMessage(post) {
         const user = firebase.auth().currentUser;
         if (!user) return;
@@ -10599,6 +10612,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 260);
     }
 
+    /* Hook: inyecta el adjunto pendiente cuando se abre un chat */
     function hookChatAttachmentInjection() {
         if (window.__comunidadChatInjectionHooked) return;
         window.__comunidadChatInjectionHooked = true;
@@ -10616,6 +10630,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const autor = pend.autor ? '@' + pend.autor + ': ' : '';
                     input.value = autor + pend.texto;
                 }
+                // Intentamos inyectar la canción adjunta si el sistema de mensajes la soporta
                 window.dispatchEvent(new CustomEvent('omega:comunidadAttach', {
                     detail: { cancion: pend.cancion }
                 }));
@@ -10625,6 +10640,9 @@ document.addEventListener('DOMContentLoaded', () => {
         obs.observe(chatView, { attributes: true, attributeFilter: ['class'] });
     }
 
+    /* ========================================================
+       EDICIÓN / ELIMINACIÓN
+       ======================================================== */
     function startEditPost(post) {
         openCrearView(post);
     }
@@ -10642,6 +10660,9 @@ document.addEventListener('DOMContentLoaded', () => {
         );
     }
 
+    /* ========================================================
+       COMENTARIOS
+       ======================================================== */
     function openComments(post) {
         activePostId = post.id;
         activePostData = post;
@@ -10863,6 +10884,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    /* ========================================================
+       REPRODUCIR CANCIÓN DE UN POST
+       ======================================================== */
     function playSongFromPost(cancion) {
         if (!cancion || !cancion.audioUrl) return;
         const list = $('playlist');
@@ -10890,6 +10914,9 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => div.click(), 30);
     }
 
+    /* ========================================================
+       INIT
+       ======================================================== */
     function init() {
         if (typeof firebase === 'undefined' || !firebase.auth) {
             setTimeout(init, 300);
@@ -11015,324 +11042,4 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.__openComunidad = openComunidad;
-})();
-
-/* ============================================================
-   46. REPRODUCTOR DE CANCIONES YOUTUBE (oculto, solo audio)
-   ------------------------------------------------------------
-   Las canciones con origen:'youtube' se reproducen mediante un
-   iframe de YouTube oculto (1x1px, fuera de pantalla). La UI
-   del reproductor mini se actualiza como si fuera una canción
-   normal: portada, título, play/pause, progreso, siguiente/
-   anterior. El video nunca se muestra.
-   ============================================================ */
-(function () {
-    'use strict';
-
-    const YT_REGEX = /(?:youtube\.com\/(?:watch\?[^#]*v=|embed\/|shorts\/|v\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
-
-    function extractVideoId(url) {
-        if (!url) return null;
-        const m = String(url).match(YT_REGEX);
-        return m ? m[1] : null;
-    }
-
-    let ytPlayer = null;
-    let ytReady = false;
-    let ytApiLoading = null;
-    let ytApiLoaded = false;
-
-    function loadYTAPI() {
-        if (ytApiLoaded && window.YT && window.YT.Player) return Promise.resolve();
-        if (ytApiLoading) return ytApiLoading;
-        ytApiLoading = new Promise((resolve) => {
-            const tag = document.createElement('script');
-            tag.src = 'https://www.youtube.com/iframe_api';
-            const firstScriptTag = document.getElementsByTagName('script')[0];
-            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-            const prev = window.onYouTubeIframeAPIReady;
-            window.onYouTubeIframeAPIReady = function () {
-                ytApiLoaded = true;
-                if (typeof prev === 'function') { try { prev(); } catch (_) {} }
-                resolve();
-            };
-        });
-        return ytApiLoading;
-    }
-
-    function ensureHiddenContainer() {
-        let el = document.getElementById('yt-hidden-container');
-        if (el) return el;
-        el = document.createElement('div');
-        el.id = 'yt-hidden-container';
-        el.setAttribute('aria-hidden', 'true');
-        // Totalmente invisible, pero en el DOM para que el iframe cargue
-        el.style.cssText =
-            'position:fixed;bottom:0;right:0;width:1px;height:1px;' +
-            'opacity:0.01;pointer-events:none;z-index:-1;overflow:hidden;';
-        const inner = document.createElement('div');
-        inner.id = 'yt-hidden-player';
-        el.appendChild(inner);
-        document.body.appendChild(el);
-        return el;
-    }
-
-    async function ensureYtPlayer() {
-        await loadYTAPI();
-        if (ytPlayer && ytReady) return ytPlayer;
-        ensureHiddenContainer();
-        return new Promise((resolve) => {
-            ytPlayer = new window.YT.Player('yt-hidden-player', {
-                height: '1',
-                width: '1',
-                playerVars: {
-                    autoplay: 0,
-                    controls: 0,
-                    disablekb: 1,
-                    modestbranding: 1,
-                    playsinline: 1,
-                    rel: 0
-                },
-                events: {
-                    onReady: () => { ytReady = true; resolve(ytPlayer); },
-                    onStateChange: onYtStateChange,
-                    onError: onYtError
-                }
-            });
-        });
-    }
-
-    const el = (id) => document.getElementById(id);
-
-    function fmtTime(s) {
-        if (!isFinite(s) || s < 0) return '0:00';
-        const m = Math.floor(s / 60);
-        const sec = Math.floor(s % 60);
-        return `${m}:${sec < 10 ? '0' : ''}${sec}`;
-    }
-
-    function syncUIToYouTube(item) {
-        document.querySelectorAll('#playlist .playlist-item').forEach(i => i.classList.remove('active'));
-        if (item) item.classList.add('active');
-
-        const cover = item?.querySelector('.thumbnail img')?.src || '';
-        const title = item?.querySelector('.item-title')?.textContent.trim() || '';
-
-        const playerCover = el('player-cover');
-        const playerTitle = el('player-title');
-        const player      = el('player');
-
-        if (playerCover) {
-            if (cover) playerCover.src = cover;
-            else playerCover.removeAttribute('src');
-        }
-        if (playerTitle) playerTitle.textContent = title;
-        if (player) player.classList.add('active');
-
-        const progressBar = el('progress-bar');
-        if (progressBar) {
-            progressBar.style.setProperty('--progress', '0%');
-            progressBar.setAttribute('aria-valuenow', 0);
-        }
-        const curEl = el('current-time');
-        const durEl = el('duration');
-        if (curEl) curEl.textContent = '0:00';
-        if (durEl) durEl.textContent = '0:00';
-    }
-
-    function updatePlayIcon(playing) {
-        const playIcon = el('play-icon');
-        const playButton = el('play-button');
-        if (playIcon) {
-            playIcon.innerHTML = playing
-                ? '<rect x="6" y="4" width="4" height="16" fill="#ffffff" /><rect x="14" y="4" width="4" height="16" fill="#ffffff" />'
-                : '<polygon points="5,3 19,12 5,21" fill="#ffffff" />';
-            playIcon.style.marginLeft = playing ? '0' : '3px';
-        }
-        if (playButton) playButton.setAttribute('aria-label', playing ? 'Pausar' : 'Reproducir');
-    }
-
-    function onYtStateChange(e) {
-        const fsVinyl = el('fs-vinyl');
-        const S = window.YT && window.YT.PlayerState;
-        if (!S) return;
-
-        if (e.data === S.PLAYING) {
-            updatePlayIcon(true);
-            if (fsVinyl) fsVinyl.classList.add('playing');
-        } else if (e.data === S.PAUSED) {
-            updatePlayIcon(false);
-            if (fsVinyl) fsVinyl.classList.remove('playing');
-        } else if (e.data === S.ENDED) {
-            updatePlayIcon(false);
-            if (fsVinyl) fsVinyl.classList.remove('playing');
-            // Avanzar a la siguiente canción
-            document.dispatchEvent(new CustomEvent('omega:next'));
-        }
-    }
-
-    function onYtError() {
-        setTimeout(() => document.dispatchEvent(new CustomEvent('omega:next')), 300);
-    }
-
-    async function loadAndPlay(videoId, item) {
-        syncUIToYouTube(item);
-        const player = await ensureYtPlayer();
-        if (typeof player.loadVideoById === 'function') {
-            player.loadVideoById(videoId);
-            // Asegurar autoplay
-            setTimeout(() => { try { player.playVideo(); } catch (_) {} }, 300);
-        } else if (typeof player.cueVideoById === 'function') {
-            player.cueVideoById(videoId);
-            player.playVideo();
-        }
-    }
-
-    /* ---------- Interceptar clicks en items de YouTube ---------- */
-    function hookClicks() {
-        const playlist = document.getElementById('playlist');
-        if (!playlist || playlist.dataset.ytClickHook === '1') return;
-        playlist.dataset.ytClickHook = '1';
-
-        playlist.addEventListener('click', function (e) {
-            const item = e.target.closest('.playlist-item');
-            if (!item) return;
-            const src = item.dataset.src || '';
-            const id = extractVideoId(src);
-            if (!id) return;   // no es YouTube → dejar pasar
-
-            e.stopPropagation();
-            e.preventDefault();
-            e.stopImmediatePropagation();
-
-            loadAndPlay(id, item);
-        }, true);
-    }
-
-    /* ---------- Interceptar botón play/pause del mini ---------- */
-    function hookPlayButton() {
-        const playButton = el('play-button');
-        if (!playButton || playButton.dataset.ytHooked === '1') return;
-        playButton.dataset.ytHooked = '1';
-
-        playButton.addEventListener('click', function (e) {
-            if (!ytReady || !ytPlayer) return;
-
-            const active = document.querySelector('#playlist .playlist-item.active');
-            if (!active) return;
-            const id = extractVideoId(active.dataset.src || '');
-            if (!id) return;   // la activa no es YouTube → dejar pasar
-
-            e.stopPropagation();
-            e.preventDefault();
-            e.stopImmediatePropagation();
-
-            const S = window.YT && window.YT.PlayerState;
-            const state = ytPlayer.getPlayerState && ytPlayer.getPlayerState();
-            if (state === S.PLAYING) {
-                ytPlayer.pauseVideo();
-            } else {
-                ytPlayer.playVideo();
-            }
-        }, true);
-    }
-
-    /* ---------- Click en la barra de progreso → seek ---------- */
-    function hookProgressSeek() {
-        const progressBar = el('progress-bar');
-        if (!progressBar || progressBar.dataset.ytHooked === '1') return;
-        progressBar.dataset.ytHooked = '1';
-
-        progressBar.addEventListener('click', function (e) {
-            const active = document.querySelector('#playlist .playlist-item.active');
-            if (!active) return;
-            if (!extractVideoId(active.dataset.src || '')) return;
-            if (!ytReady || !ytPlayer || !ytPlayer.seekTo) return;
-
-            const dur = ytPlayer.getDuration() || 0;
-            if (dur <= 0) return;
-
-            const rect = progressBar.getBoundingClientRect();
-            const ratio = (e.clientX - rect.left) / rect.width;
-            ytPlayer.seekTo(Math.min(1, Math.max(0, ratio)) * dur, true);
-
-            e.stopPropagation();
-            e.preventDefault();
-        }, true);
-    }
-
-    /* ---------- Sincronizar progreso cada 500 ms ---------- */
-    function startProgressLoop() {
-        if (window.__ytProgressLoop) return;
-        window.__ytProgressLoop = true;
-
-        setInterval(() => {
-            const active = document.querySelector('#playlist .playlist-item.active');
-            if (!active) return;
-            if (!extractVideoId(active.dataset.src || '')) return;
-            if (!ytReady || !ytPlayer) return;
-            if (!ytPlayer.getCurrentTime || !ytPlayer.getDuration) return;
-
-            const cur = ytPlayer.getCurrentTime() || 0;
-            const dur = ytPlayer.getDuration() || 0;
-            if (dur <= 0) return;
-
-            const percent = (cur / dur) * 100;
-            const progressBar = el('progress-bar');
-            if (progressBar) {
-                progressBar.style.setProperty('--progress', percent + '%');
-                progressBar.setAttribute('aria-valuenow', Math.round(percent));
-            }
-            const curEl = el('current-time');
-            const durEl = el('duration');
-            if (curEl) curEl.textContent = fmtTime(cur);
-            if (durEl) durEl.textContent = fmtTime(dur);
-        }, 500);
-    }
-
-    /* ---------- Evitar que el <audio> intente reproducir YouTube ---------- */
-    function hookAudioGuard() {
-        const audio = document.getElementById('audio-player');
-        if (!audio || audio.dataset.ytGuard === '1') return;
-        audio.dataset.ytGuard = '1';
-
-        const originalPlay = audio.play.bind(audio);
-        audio.play = function () {
-            const src = audio.src || '';
-            const id = extractVideoId(src);
-            if (id) {
-                try { audio.pause(); } catch (_) {}
-                const active = document.querySelector('#playlist .playlist-item.active');
-                loadAndPlay(id, active);
-                return Promise.resolve();
-            }
-            return originalPlay();
-        };
-
-        audio.addEventListener('error', function (e) {
-            const src = audio.src || '';
-            const id = extractVideoId(src);
-            if (!id) return;
-            e.stopImmediatePropagation();
-            e.preventDefault();
-            try { audio.pause(); } catch (_) {}
-            const active = document.querySelector('#playlist .playlist-item.active');
-            loadAndPlay(id, active);
-        }, true);
-    }
-
-    function init() {
-        hookClicks();
-        hookPlayButton();
-        hookProgressSeek();
-        hookAudioGuard();
-        startProgressLoop();
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-    [500, 1500, 3000].forEach(ms => setTimeout(init, ms));
 })();
