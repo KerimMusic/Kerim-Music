@@ -14832,3 +14832,459 @@ document.addEventListener('DOMContentLoaded', () => {
     /* API pública por si la necesitas desde la consola */
     window.__applyCategoryVisibility = applyVisibility;
 })();
+/* ============================================================
+   54. NOTIFICACIONES EN LA BARRA DE NAVEGACIÓN INFERIOR (v2)
+   ------------------------------------------------------------
+   · Mensajes:   noLeidos[currentUser.uid] en conversaciones
+   · Comunidad:  A) publicaciones nuevas de OTROS usuarios
+                 B) comentarios nuevos en MIS publicaciones
+                 C) comentarios nuevos en publicaciones donde YO
+                    comenté antes (equivalente a "respuestas")
+   · Timestamp comunidad_ultima_vista persiste en Firestore
+   · Sincronización multi-dispositivo vía listener del user doc
+   ============================================================ */
+(function () {
+    'use strict';
+
+    const $ = (id) => document.getElementById(id);
+    const LOG = '[BN-NOTIF]';
+    const POSTS_COL    = 'comunidad_publicaciones';
+    const COMMENTS_SUB = 'comentarios';
+
+    let currentUser      = null;
+    let lastSeenMs       = 0;
+    let lastSaveAttempt  = 0;
+
+    let unsubMessages   = null;
+    let unsubPosts      = null;
+    let unsubMyComments = null;
+    let unsubUserDoc    = null;
+
+    const unsubCommentsByPost = new Map(); // postId → unsubscribe
+    const countsByPost        = new Map(); // postId → nº comentarios no leídos
+    let   newPostsCount       = 0;
+
+    let myOwnPostIds       = new Set();
+    let myCommentedPostIds = new Set();
+
+    let markSeenTimer = null;
+    let isMarkingSeen = false;
+
+    /* ============================================================
+       BADGE
+       ============================================================ */
+    function getBadge(btnId) {
+        const btn = $(btnId);
+        if (!btn) return null;
+        let badge = btn.querySelector('.bn-notif-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'bn-notif-badge';
+            badge.style.display = 'none';
+            badge.setAttribute('aria-hidden', 'true');
+            const icon = btn.querySelector('.bn-icon') || btn;
+            if (getComputedStyle(icon).position === 'static') {
+                icon.style.position = 'relative';
+            }
+            icon.appendChild(badge);
+        }
+        return badge;
+    }
+
+    function setBadge(btnId, count) {
+        const badge = getBadge(btnId);
+        if (!badge) return;
+        const n = Math.max(0, Number(count) || 0);
+        if (n === 0) {
+            badge.style.display = 'none';
+            badge.textContent = '';
+        } else {
+            badge.style.display = 'inline-flex';
+            badge.textContent = n > 99 ? '99+' : String(n);
+        }
+    }
+
+    function isCommunityVisible() {
+        const v = $('comunidad-view');
+        return !!(v && v.classList.contains('visible'));
+    }
+
+    function recalcCommunityBadge() {
+        // Si el usuario está viendo Comunidad AHORA, no mostrar badge
+        // (se marcará como visto al cerrar o tras 2.5s)
+        if (isCommunityVisible()) {
+            setBadge('bn-comunidad', 0);
+            return;
+        }
+        let total = newPostsCount;
+        countsByPost.forEach(c => { total += c; });
+        setBadge('bn-comunidad', total);
+    }
+
+    /* ============================================================
+       TIMESTAMP comunity_ultima_vista
+       ============================================================ */
+    function readMs(raw) {
+        if (!raw) return 0;
+        if (typeof raw.toMillis === 'function') return raw.toMillis();
+        if (typeof raw.toDate  === 'function') return raw.toDate().getTime();
+        if (typeof raw === 'number')            return raw;
+        return 0;
+    }
+
+    async function loadLastSeen() {
+        if (!currentUser) return 0;
+        try {
+            const doc = await firebase.firestore()
+                .collection('historial_usuarios').doc(currentUser.uid).get();
+            const data = doc.exists ? (doc.data() || {}) : {};
+            let ms = readMs(data.comunidad_ultima_vista);
+
+            // Si nunca se ha marcado, o lleva >7 días sin abrir,
+            // inicializar a "ahora" para no spamear notificaciones antiguas
+            const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            if (!ms || ms < sevenDaysAgo) {
+                ms = Date.now();
+                try {
+                    await firebase.firestore()
+                        .collection('historial_usuarios').doc(currentUser.uid)
+                        .set({
+                            comunidad_ultima_vista:
+                                firebase.firestore.Timestamp.fromMillis(ms)
+                        }, { merge: true });
+                } catch (_) {}
+            }
+            lastSeenMs = ms;
+        } catch (e) {
+            console.warn(LOG, 'loadLastSeen:', e);
+            lastSeenMs = Date.now();
+        }
+        return lastSeenMs;
+    }
+
+    async function saveLastSeen() {
+        if (!currentUser || isMarkingSeen) return;
+        const now = Date.now();
+        if (now - lastSaveAttempt < 1500) return; // evitar dobles escrituras
+        lastSaveAttempt = now;
+
+        isMarkingSeen = true;
+        lastSeenMs    = now;
+        newPostsCount = 0;
+        countsByPost.clear();
+        recalcCommunityBadge();
+
+        try {
+            await firebase.firestore()
+                .collection('historial_usuarios').doc(currentUser.uid)
+                .set({
+                    comunidad_ultima_vista:
+                        firebase.firestore.Timestamp.fromMillis(now)
+                }, { merge: true });
+        } catch (e) {
+            console.warn(LOG, 'saveLastSeen:', e);
+        } finally {
+            isMarkingSeen = false;
+        }
+    }
+
+    /* ============================================================
+       MENSAJES  (lógica intacta — no se modifica)
+       ============================================================ */
+    function listenMessages() {
+        if (unsubMessages) { unsubMessages(); unsubMessages = null; }
+        if (!currentUser) { setBadge('bn-mensajes', 0); return; }
+        try {
+            unsubMessages = firebase.firestore()
+                .collection('conversaciones')
+                .where('participantes', 'array-contains', currentUser.uid)
+                .onSnapshot(snap => {
+                    let total = 0;
+                    snap.forEach(doc => {
+                        const d = doc.data() || {};
+                        total += (d.noLeidos && d.noLeidos[currentUser.uid]) || 0;
+                    });
+                    setBadge('bn-mensajes', total);
+                }, err => {
+                    console.warn(LOG, 'Listener Mensajes:', err && err.code);
+                });
+        } catch (e) {
+            console.warn(LOG, 'Setup Mensajes:', e);
+        }
+    }
+
+    /* ============================================================
+       COMUNIDAD — A) Publicaciones nuevas de OTROS usuarios
+       ============================================================ */
+    function listenPosts() {
+        if (unsubPosts) { unsubPosts(); unsubPosts = null; }
+        myOwnPostIds = new Set();
+        if (!currentUser) return;
+
+        try {
+            unsubPosts = firebase.firestore()
+                .collection(POSTS_COL)
+                .orderBy('fecha', 'desc')
+                .limit(50)
+                .onSnapshot(snap => {
+                    let count = 0;
+                    const mine = new Set();
+                    snap.forEach(doc => {
+                        const d = doc.data() || {};
+                        if (d.uid === currentUser.uid) {
+                            mine.add(doc.id);   // mi propia publicación
+                            return;
+                        }
+                        const fecha = readMs(d.fecha);
+                        if (fecha > lastSeenMs) count++;  // publicación nueva ajena
+                    });
+                    newPostsCount = count;
+                    myOwnPostIds  = mine;
+                    syncCommentSubscriptions();
+                    recalcCommunityBadge();
+                }, err => {
+                    console.warn(LOG, 'Posts listener:', err && err.code);
+                });
+        } catch (e) {
+            console.warn(LOG, 'listenPosts:', e);
+        }
+    }
+
+    /* ============================================================
+       COMUNIDAD — C) Publicaciones donde YO comenté antes
+       ============================================================ */
+    function listenMyCommentedPosts() {
+        if (unsubMyComments) { unsubMyComments(); unsubMyComments = null; }
+        myCommentedPostIds = new Set();
+        if (!currentUser) return;
+
+        try {
+            unsubMyComments = firebase.firestore()
+                .collectionGroup(COMMENTS_SUB)
+                .where('uid', '==', currentUser.uid)
+                .limit(200)
+                .onSnapshot(snap => {
+                    const ids = new Set();
+                    snap.forEach(doc => {
+                        const commentColl = doc.ref.parent;
+                        const postRef     = commentColl && commentColl.parent;
+                        const postsColl   = postRef && postRef.parent;
+                        if (postsColl && postsColl.id === POSTS_COL && postRef) {
+                            ids.add(postRef.id);
+                        }
+                    });
+                    myCommentedPostIds = ids;
+                    syncCommentSubscriptions();
+                }, err => {
+                    console.warn(LOG, '⚠️ collectionGroup("comentarios") FALLÓ:', err && err.code);
+                    if (err && err.code === 'failed-precondition') {
+                        console.warn(LOG, '👉 CREA EL ÍNDICE EN FIRESTORE CONSOLE:');
+                        console.warn(LOG, '   · Collection group: comentarios');
+                        console.warn(LOG, '   · Field: uid   · Ascending');
+                        console.warn(LOG, '   Mientras tanto, las respuestas a tus comentarios');
+                        console.warn(LOG, '   en publicaciones ajenas no se notificarán,');
+                        console.warn(LOG, '   pero SÍ las de tus propias publicaciones.');
+                    }
+                    myCommentedPostIds = new Set();
+                    syncCommentSubscriptions();
+                });
+        } catch (e) {
+            console.warn(LOG, 'listenMyCommentedPosts:', e);
+        }
+    }
+
+    /* ============================================================
+       COMUNIDAD — B + C) Suscripción a comentarios por publicación
+       ============================================================ */
+    function listenPostComments(postId, isMyPost) {
+        if (!postId || !currentUser) return;
+        if (unsubCommentsByPost.has(postId)) return;
+
+        try {
+            const unsub = firebase.firestore()
+                .collection(POSTS_COL).doc(postId)
+                .collection(COMMENTS_SUB)
+                .onSnapshot(snap => {
+                    // 1) Si es publicación ajena, detectar la fecha de MI primer comentario
+                    let myFirstCommentMs = 0;
+                    if (!isMyPost) {
+                        snap.forEach(doc => {
+                            const d = doc.data() || {};
+                            if (d.uid !== currentUser.uid) return;
+                            const fecha = readMs(d.fecha);
+                            if (fecha > 0 && (myFirstCommentMs === 0 || fecha < myFirstCommentMs)) {
+                                myFirstCommentMs = fecha;
+                            }
+                        });
+                    }
+
+                    // 2) Contar comentarios ajenos no leídos
+                    let count = 0;
+                    snap.forEach(doc => {
+                        const d = doc.data() || {};
+                        if (d.uid === currentUser.uid) return;         // propios no cuentan
+                        const fecha = readMs(d.fecha);
+                        if (fecha <= lastSeenMs) return;               // ya visto
+                        if (!isMyPost && myFirstCommentMs > 0 && fecha < myFirstCommentMs) {
+                            return; // anterior a mi comentario → no es "respuesta"
+                        }
+                        count++;
+                    });
+
+                    countsByPost.set(postId, count);
+                    recalcCommunityBadge();
+                }, err => {
+                    console.warn(LOG, 'Comments listener', postId, err && err.code);
+                });
+            unsubCommentsByPost.set(postId, unsub);
+        } catch (e) {
+            console.warn(LOG, 'listenPostComments', postId, e);
+        }
+    }
+
+    function syncCommentSubscriptions() {
+        const relevant = new Map(); // postId → isMyPost
+        myOwnPostIds.forEach(id => relevant.set(id, true));
+        myCommentedPostIds.forEach(id => {
+            if (!relevant.has(id)) relevant.set(id, false);
+        });
+
+        // Limpiar suscripciones que ya no aplican
+        unsubCommentsByPost.forEach((unsub, postId) => {
+            if (!relevant.has(postId)) {
+                try { unsub(); } catch (_) {}
+                unsubCommentsByPost.delete(postId);
+                countsByPost.delete(postId);
+            }
+        });
+
+        // Suscribir nuevas
+        relevant.forEach((isMyPost, id) => {
+            if (!unsubCommentsByPost.has(id)) listenPostComments(id, isMyPost);
+        });
+
+        recalcCommunityBadge();
+    }
+
+    /* ============================================================
+       SINCRONIZACIÓN MULTI-DISPOSITIVO
+       ============================================================ */
+    function listenUserDoc() {
+        if (unsubUserDoc) { unsubUserDoc(); unsubUserDoc = null; }
+        if (!currentUser) return;
+
+        try {
+            unsubUserDoc = firebase.firestore()
+                .collection('historial_usuarios').doc(currentUser.uid)
+                .onSnapshot(doc => {
+                    const data = doc.exists ? (doc.data() || {}) : {};
+                    const ms   = readMs(data.comunidad_ultima_vista);
+                    if (ms > lastSeenMs) {
+                        // Otro dispositivo marcó como leído → limpiar aquí
+                        lastSeenMs    = ms;
+                        newPostsCount = 0;
+                        countsByPost.clear();
+                        recalcCommunityBadge();
+                    }
+                }, err => {
+                    console.warn(LOG, 'User doc listener:', err && err.code);
+                });
+        } catch (e) {
+            console.warn(LOG, 'listenUserDoc:', e);
+        }
+    }
+
+    /* ============================================================
+       VER LA COMUNIDAD → marcar como visto
+       ============================================================ */
+    function watchCommunityView() {
+        const view = $('comunidad-view');
+        if (!view) return false;
+        if (view.dataset.bnNotifWatch === '1') return true;
+        view.dataset.bnNotifWatch = '1';
+
+        let lastVisible = false;
+        const obs = new MutationObserver(() => {
+            const visible = view.classList.contains('visible');
+            if (visible === lastVisible) return;
+            lastVisible = visible;
+
+            if (visible) {
+                recalcCommunityBadge();  // oculta el badge mientras se ve
+                if (markSeenTimer) clearTimeout(markSeenTimer);
+                markSeenTimer = setTimeout(() => {
+                    markSeenTimer = null;
+                    if (view.classList.contains('visible')) saveLastSeen();
+                }, 2500);
+            } else {
+                if (markSeenTimer) { clearTimeout(markSeenTimer); markSeenTimer = null; }
+                saveLastSeen();
+            }
+        });
+        obs.observe(view, { attributes: true, attributeFilter: ['class'] });
+        return true;
+    }
+
+    /* ============================================================
+       INIT
+       ============================================================ */
+    function init() {
+        if (typeof firebase === 'undefined' || !firebase.auth) {
+            setTimeout(init, 300);
+            return;
+        }
+
+        let tries = 0;
+        (function waitView() {
+            tries++;
+            if (watchCommunityView()) return;
+            if (tries < 40) setTimeout(waitView, 250);
+        })();
+
+        firebase.auth().onAuthStateChanged(async user => {
+            currentUser = user;
+
+            if (user) {
+                await loadLastSeen();
+                listenMessages();
+                listenPosts();
+                listenMyCommentedPosts();
+                listenUserDoc();
+                console.log(LOG, '✅ Iniciado para', user.uid, '| lastSeen:', new Date(lastSeenMs).toLocaleString());
+            } else {
+                if (unsubMessages)   { unsubMessages();   unsubMessages = null; }
+                if (unsubPosts)      { unsubPosts();      unsubPosts = null; }
+                if (unsubMyComments) { unsubMyComments(); unsubMyComments = null; }
+                if (unsubUserDoc)    { unsubUserDoc();    unsubUserDoc = null; }
+                unsubCommentsByPost.forEach(u => { try { u(); } catch (_) {} });
+                unsubCommentsByPost.clear();
+                countsByPost.clear();
+                newPostsCount = 0;
+                myOwnPostIds = new Set();
+                myCommentedPostIds = new Set();
+                lastSeenMs = 0;
+                setBadge('bn-mensajes', 0);
+                setBadge('bn-comunidad', 0);
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    /* API pública por si hace falta debug desde consola */
+    window.__bnNotificationsV2 = {
+        refreshAll: () => { listenMessages(); listenPosts(); listenMyCommentedPosts(); },
+        markCommunitySeen: saveLastSeen,
+        debug: () => {
+            console.log('lastSeenMs:', new Date(lastSeenMs).toLocaleString());
+            console.log('newPostsCount:', newPostsCount);
+            console.log('myOwnPostIds:', Array.from(myOwnPostIds));
+            console.log('myCommentedPostIds:', Array.from(myCommentedPostIds));
+            console.log('countsByPost:', Array.from(countsByPost.entries()));
+        }
+    };
+})();
